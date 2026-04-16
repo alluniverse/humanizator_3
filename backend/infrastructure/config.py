@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     enable_prometheus: bool = True
 
+    # NLP / ML models
+    sentence_transformer_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    deberta_model: str = "microsoft/deberta-v3-large"
+    perplexity_model: str = "gpt2"
+
     @field_validator("log_level")
     @classmethod
     def _validate_log_level(cls, value: str) -> str:

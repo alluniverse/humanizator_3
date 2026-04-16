@@ -8,6 +8,10 @@ import structlog
 from infrastructure.config import settings
 
 
+def get_logger(name: str) -> structlog.stdlib.BoundLogger:
+    return structlog.get_logger(name)
+
+
 def configure_logging() -> None:
     """Configure structlog and stdlib logging."""
     level = getattr(logging, settings.log_level)

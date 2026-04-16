@@ -125,3 +125,25 @@ class PresetRead(BaseModel):
     active_heuristics: list[str] | None
     created_at: datetime.datetime
     updated_at: datetime.datetime
+
+
+class StyleProfileRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    library_id: uuid.UUID
+    version: int
+    formality: float | None
+    sentence_length_mean: float | None
+    sentence_length_variance: float | None
+    burstiness_index: float | None
+    target_perplexity_min: float | None
+    target_perplexity_max: float | None
+    rhythm_profile: dict[str, Any] | None
+    lexical_signature: dict[str, Any] | None
+    syntax_patterns: list[str] | None
+    composition_profile: dict[str, Any] | None
+    linguistic_markers: dict[str, Any] | None
+    guidance_signals: dict[str, Any] | None
+    created_at: datetime.datetime
+    updated_at: datetime.datetime

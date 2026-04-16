@@ -8,7 +8,7 @@ celery_app = Celery(
     "humanizator",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["async_tasks.rewrite_tasks"],
+    include=["async_tasks.rewrite_tasks", "async_tasks.library_tasks"],
 )
 
 celery_app.conf.update(

@@ -7,6 +7,11 @@ from fastapi import FastAPI
 from api.health import router as health_router
 from api.metrics import metrics_endpoint, PrometheusMiddleware
 from api.routers.libraries import router as libraries_router
+from api.routers.profiles import router as profiles_router
+from api.routers.rewrite import router as rewrite_router
+from api.routers.evaluation import router as evaluation_router
+from api.routers.presets import router as presets_router
+from api.routers.admin import router as admin_router
 from infrastructure.cache.redis_client import redis_cache, redis_queue
 from infrastructure.config import settings
 from infrastructure.logging import configure_logging
@@ -34,3 +39,8 @@ if settings.enable_prometheus:
 
 app.include_router(health_router)
 app.include_router(libraries_router)
+app.include_router(profiles_router)
+app.include_router(rewrite_router)
+app.include_router(evaluation_router)
+app.include_router(presets_router)
+app.include_router(admin_router)
