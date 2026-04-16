@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.rate_limiter import rate_limit_requests, rate_limit_rewrite
 from api.schemas.rewrite import (
     RewriteTaskCreate,
     RewriteTaskRead,
@@ -24,7 +25,12 @@ from rewrite.guided_rewrite import guided_rewrite_engine
 router = APIRouter(prefix="/rewrite", tags=["rewrite"])
 
 
-@router.post("", response_model=RewriteTaskRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=RewriteTaskRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(rate_limit_requests), Depends(rate_limit_rewrite)],
+)
 async def create_rewrite_task(
     data: RewriteTaskCreate,
     session: AsyncSession = Depends(get_async_session),
@@ -110,7 +116,7 @@ async def build_semantic_contract(
     return SemanticContractRead(**contract)
 
 
-@router.post("/{task_id}/generate")
+@router.post("/{task_id}/generate", dependencies=[Depends(rate_limit_requests), Depends(rate_limit_rewrite)])
 async def generate_variants(
     task_id: uuid.UUID,
     session: AsyncSession = Depends(get_async_session),
