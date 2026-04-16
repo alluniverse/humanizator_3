@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     openai_base_url: str | None = None
     openai_model: str = "gpt-4o"
 
+    # Auth
+    jwt_secret_key: str = "change-me-in-production-use-strong-random-secret"
+    jwt_ttl_minutes: int = 60 * 24  # 24 hours
+
     # Observability
     log_level: str = "INFO"
     enable_prometheus: bool = True

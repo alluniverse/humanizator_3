@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.deps.tenant import TenantContext, get_current_tenant
 from api.rate_limiter import rate_limit_requests, rate_limit_rewrite
 from api.schemas.rewrite import (
     RewriteTaskCreate,
@@ -34,20 +35,24 @@ router = APIRouter(prefix="/rewrite", tags=["rewrite"])
 async def create_rewrite_task(
     data: RewriteTaskCreate,
     session: AsyncSession = Depends(get_async_session),
+    ctx: TenantContext = Depends(get_current_tenant),
 ) -> RewriteTask:
     library = await session.get(StyleLibrary, data.library_id)
     if not library:
         raise HTTPException(status_code=404, detail="Library not found")
+    # Verify tenant owns the library (if authenticated)
+    if ctx.user_id is not None and library.owner_id != ctx.user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     task = RewriteTask(
-        project_id=data.project_id,
+        project_id=data.project_id or ctx.project_id,
         library_id=data.library_id,
         original_text=data.original_text,
         rewrite_mode=data.rewrite_mode,
         semantic_contract_mode=data.semantic_contract_mode,
         input_constraints=data.input_constraints,
         status=RewriteTaskStatus.CREATED,
-        user_id=None,
+        user_id=ctx.user_id,
     )
     session.add(task)
     await session.commit()
@@ -59,10 +64,13 @@ async def create_rewrite_task(
 async def get_rewrite_task(
     task_id: uuid.UUID,
     session: AsyncSession = Depends(get_async_session),
+    ctx: TenantContext = Depends(get_current_tenant),
 ) -> RewriteTask:
     task = await session.get(RewriteTask, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    if ctx.user_id is not None and task.user_id != ctx.user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     return task
 
 

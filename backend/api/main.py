@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from api.health import router as health_router
 from api.metrics import metrics_endpoint, PrometheusMiddleware
+from api.routers.auth import router as auth_router
 from api.routers.libraries import router as libraries_router
 from api.routers.profiles import router as profiles_router
 from api.routers.rewrite import router as rewrite_router
@@ -38,6 +39,7 @@ if settings.enable_prometheus:
     app.add_api_route("/metrics", metrics_endpoint)
 
 app.include_router(health_router)
+app.include_router(auth_router)
 app.include_router(libraries_router)
 app.include_router(profiles_router)
 app.include_router(rewrite_router)

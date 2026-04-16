@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.deps.tenant import TenantContext, get_current_tenant
 from api.schemas.library import (
     BulkSampleImport,
     LibraryDiagnostics,
@@ -28,17 +29,25 @@ from infrastructure.db.session import get_async_session
 router = APIRouter(prefix="/libraries", tags=["libraries"])
 
 
+def _check_library_access(library: StyleLibrary, ctx: TenantContext) -> None:
+    """Raise 403 if the tenant doesn't own this library."""
+    if ctx.user_id is not None and library.owner_id != ctx.user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+
 @router.post("", response_model=StyleLibraryRead, status_code=status.HTTP_201_CREATED)
 async def create_library(
     data: StyleLibraryCreate,
     session: AsyncSession = Depends(get_async_session),
+    ctx: TenantContext = Depends(get_current_tenant),
 ) -> StyleLibrary:
     library = StyleLibrary(
         name=data.name,
         description=data.description,
         category=data.category,
         language=data.language,
-        project_id=data.project_id,
+        project_id=data.project_id or ctx.project_id,
+        owner_id=ctx.user_id,
         is_single_voice=data.is_single_voice,
     )
     session.add(library)
@@ -50,8 +59,12 @@ async def create_library(
 @router.get("", response_model=list[StyleLibraryRead])
 async def list_libraries(
     session: AsyncSession = Depends(get_async_session),
+    ctx: TenantContext = Depends(get_current_tenant),
 ) -> list[StyleLibrary]:
-    result = await session.execute(select(StyleLibrary).where(StyleLibrary.status == "active"))
+    query = select(StyleLibrary).where(StyleLibrary.status == "active")
+    if ctx.user_id is not None:
+        query = query.where(StyleLibrary.owner_id == ctx.user_id)
+    result = await session.execute(query)
     return list(result.scalars().all())
 
 
@@ -59,10 +72,12 @@ async def list_libraries(
 async def get_library(
     library_id: uuid.UUID,
     session: AsyncSession = Depends(get_async_session),
+    ctx: TenantContext = Depends(get_current_tenant),
 ) -> StyleLibrary:
     library = await session.get(StyleLibrary, library_id)
     if not library:
         raise HTTPException(status_code=404, detail="Library not found")
+    _check_library_access(library, ctx)
     return library
 
 
@@ -71,10 +86,12 @@ async def update_library(
     library_id: uuid.UUID,
     data: StyleLibraryUpdate,
     session: AsyncSession = Depends(get_async_session),
+    ctx: TenantContext = Depends(get_current_tenant),
 ) -> StyleLibrary:
     library = await session.get(StyleLibrary, library_id)
     if not library:
         raise HTTPException(status_code=404, detail="Library not found")
+    _check_library_access(library, ctx)
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(library, field, value)
     await session.commit()
@@ -86,10 +103,12 @@ async def update_library(
 async def archive_library(
     library_id: uuid.UUID,
     session: AsyncSession = Depends(get_async_session),
+    ctx: TenantContext = Depends(get_current_tenant),
 ) -> None:
     library = await session.get(StyleLibrary, library_id)
     if not library:
         raise HTTPException(status_code=404, detail="Library not found")
+    _check_library_access(library, ctx)
     library.status = "archived"
     await session.commit()
 
@@ -99,10 +118,12 @@ async def add_sample(
     library_id: uuid.UUID,
     data: StyleSampleCreate,
     session: AsyncSession = Depends(get_async_session),
+    ctx: TenantContext = Depends(get_current_tenant),
 ) -> StyleSample:
     library = await session.get(StyleLibrary, library_id)
     if not library:
         raise HTTPException(status_code=404, detail="Library not found")
+    _check_library_access(library, ctx)
 
     tier = quality_tiering_service.tier_sample(data.content)
     sample = StyleSample(
@@ -129,10 +150,12 @@ async def bulk_add_samples(
     library_id: uuid.UUID,
     data: BulkSampleImport,
     session: AsyncSession = Depends(get_async_session),
+    ctx: TenantContext = Depends(get_current_tenant),
 ) -> list[StyleSample]:
     library = await session.get(StyleLibrary, library_id)
     if not library:
         raise HTTPException(status_code=404, detail="Library not found")
+    _check_library_access(library, ctx)
 
     samples: list[StyleSample] = []
     for item in data.samples:

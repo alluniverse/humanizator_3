@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.rate_limiter import QUOTA_TIERS, get_tenant_usage, set_tenant_tier
 from infrastructure.db.models import LLMProviderConfig, Project, StyleLibrary, User
 from infrastructure.db.session import get_async_session
 
@@ -92,3 +93,29 @@ async def list_llm_providers(
         }
         for c in configs
     ]
+
+
+# ---------------------------------------------------------------------------
+# Tenant quota management
+# ---------------------------------------------------------------------------
+
+
+@router.post("/tenants/{tenant_id}/tier")
+async def set_quota_tier(
+    tenant_id: str,
+    tier: str,
+) -> dict[str, Any]:
+    """Set quota tier for a tenant. Valid tiers: free, basic, pro, unlimited."""
+    if tier not in QUOTA_TIERS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid tier '{tier}'. Valid: {list(QUOTA_TIERS)}",
+        )
+    await set_tenant_tier(tenant_id, tier)
+    return {"tenant_id": tenant_id, "tier": tier, "quota": QUOTA_TIERS[tier]}
+
+
+@router.get("/tenants/{tenant_id}/usage")
+async def get_quota_usage(tenant_id: str) -> dict[str, Any]:
+    """Return current rate-limit usage counters for a tenant."""
+    return await get_tenant_usage(tenant_id)
