@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input, Textarea } from "@/components/ui/input";
 import { PageSpinner, Spinner } from "@/components/ui/spinner";
-import { TIER_COLOR, formatDate, truncate } from "@/lib/utils";
+import { TIER_COLOR, formatDate, truncate, extractErrorMessage } from "@/lib/utils";
 import { ArrowLeft, Plus, Trash2, Camera, BarChart2, Download, AlertCircle, CheckCircle2, X, Link2, Pencil, ChevronDown, ChevronUp, Check } from "lucide-react";
 import Link from "next/link";
 import toast from "react-hot-toast";
@@ -59,8 +59,7 @@ export default function LibraryDetailPage() {
       toast.success("Образец добавлен");
     },
     onError: (e: unknown) => {
-      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Ошибка добавления";
-      toast.error(msg);
+      toast.error(extractErrorMessage(e, "Ошибка добавления"));
     },
   });
 
@@ -74,8 +73,7 @@ export default function LibraryDetailPage() {
       toast.success(`Добавлено ${data.added} образцов из «${data.title}»`);
     },
     onError: (e: unknown) => {
-      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Ошибка парсинга";
-      toast.error(msg);
+      toast.error(extractErrorMessage(e, "Ошибка парсинга"));
     },
   });
 

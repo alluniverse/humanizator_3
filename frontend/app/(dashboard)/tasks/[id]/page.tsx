@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageSpinner, Spinner } from "@/components/ui/spinner";
-import { STATUS_COLOR, MODE_LABEL, formatDate } from "@/lib/utils";
+import { STATUS_COLOR, MODE_LABEL, formatDate, extractErrorMessage } from "@/lib/utils";
 import { ArrowLeft, Play, ChevronDown, ChevronUp, Shield, BarChart2, CheckSquare2 } from "lucide-react";
 import Link from "next/link";
 import toast from "react-hot-toast";
@@ -42,8 +42,7 @@ export default function TaskDetailPage() {
       toast.success("Задача запущена");
     },
     onError: (e: unknown) => {
-      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Ошибка запуска";
-      toast.error(msg);
+      toast.error(extractErrorMessage(e, "Ошибка запуска"));
     },
   });
 

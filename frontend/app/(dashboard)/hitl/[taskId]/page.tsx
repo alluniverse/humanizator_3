@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/input";
 import { PageSpinner } from "@/components/ui/spinner";
-import { formatDate } from "@/lib/utils";
+import { formatDate, extractErrorMessage } from "@/lib/utils";
 import { ArrowLeft, CheckCircle2, XCircle, MessageSquare, AlertCircle } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -45,8 +45,7 @@ export default function HitlReviewPage() {
       );
     },
     onError: (e: unknown) => {
-      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Ошибка отправки";
-      toast.error(msg);
+      toast.error(extractErrorMessage(e, "Ошибка отправки"));
     },
   });
 

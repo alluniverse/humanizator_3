@@ -12,7 +12,7 @@ from domain.enums import RewriteMode, RewriteTaskStatus, SemanticContractMode
 
 
 class RewriteTaskCreate(BaseModel):
-    project_id: uuid.UUID
+    project_id: uuid.UUID | None = None
     library_id: uuid.UUID
     original_text: str
     rewrite_mode: RewriteMode = RewriteMode.BALANCED

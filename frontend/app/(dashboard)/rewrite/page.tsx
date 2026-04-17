@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea, Select } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { PageSpinner } from "@/components/ui/spinner";
-import { MODE_LABEL } from "@/lib/utils";
+import { MODE_LABEL, extractErrorMessage } from "@/lib/utils";
 import { Wand2, BookOpen, Info } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -48,8 +48,7 @@ export default function RewritePage() {
       router.push(`/tasks/${task.id}`);
     },
     onError: (e: unknown) => {
-      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Ошибка создания задачи";
-      toast.error(msg);
+      toast.error(extractErrorMessage(e, "Ошибка создания задачи"));
     },
   });
 

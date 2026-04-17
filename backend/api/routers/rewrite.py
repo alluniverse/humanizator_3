@@ -19,11 +19,25 @@ from api.schemas.rewrite import (
 from application.services.input_analyzer import input_analyzer
 from application.services.semantic_contract import semantic_contract_builder
 from domain.enums import RewriteTaskStatus
-from infrastructure.db.models import RewriteTask, StyleLibrary, StyleProfile, StyleSample
+from infrastructure.db.models import Project, RewriteTask, StyleLibrary, StyleProfile, StyleSample
 from infrastructure.db.session import get_async_session
 from rewrite.guided_rewrite import guided_rewrite_engine
 
 router = APIRouter(prefix="/rewrite", tags=["rewrite"])
+
+
+async def _get_or_create_default_project(user_id: uuid.UUID, session: AsyncSession) -> uuid.UUID:
+    """Return the user's default project, creating it on first use."""
+    result = await session.execute(
+        select(Project).where(Project.owner_id == user_id).limit(1)
+    )
+    project = result.scalar_one_or_none()
+    if project is None:
+        project = Project(name="Default", owner_id=user_id)
+        session.add(project)
+        await session.commit()
+        await session.refresh(project)
+    return project.id
 
 
 @router.post(
@@ -44,8 +58,12 @@ async def create_rewrite_task(
     if ctx.user_id is not None and library.owner_id != ctx.user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
+    project_id = data.project_id or ctx.project_id
+    if project_id is None and ctx.user_id is not None:
+        project_id = await _get_or_create_default_project(ctx.user_id, session)
+
     task = RewriteTask(
-        project_id=data.project_id or ctx.project_id,
+        project_id=project_id,
         library_id=data.library_id,
         original_text=data.original_text,
         rewrite_mode=data.rewrite_mode,

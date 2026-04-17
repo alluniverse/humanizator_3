@@ -8,6 +8,7 @@ import { useAuthStore } from "@/store/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { extractErrorMessage } from "@/lib/utils";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -32,8 +33,7 @@ export default function LoginPage() {
       setAuth(data.access_token, data.user_id);
       router.push("/dashboard");
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Ошибка входа";
-      toast.error(msg);
+      toast.error(extractErrorMessage(err, "Ошибка входа"));
     } finally {
       setLoading(false);
     }

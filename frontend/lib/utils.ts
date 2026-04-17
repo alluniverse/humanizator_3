@@ -29,6 +29,23 @@ export const MODE_LABEL: Record<string, string> = {
   precision: "Точный (token-level)",
 };
 
+/** Extract a human-readable string from any FastAPI error shape. */
+export function extractErrorMessage(err: unknown, fallback = "Произошла ошибка"): string {
+  const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+  if (!detail) return fallback;
+  if (typeof detail === "string") return detail;
+  // Pydantic v2 validation errors: [{type, loc, msg, input}, ...]
+  if (Array.isArray(detail)) {
+    return detail
+      .map((d) => {
+        const loc = Array.isArray(d.loc) ? d.loc.filter((s: unknown) => s !== "body").join(" → ") : "";
+        return loc ? `${loc}: ${d.msg}` : d.msg;
+      })
+      .join("; ");
+  }
+  return fallback;
+}
+
 export const STATUS_COLOR: Record<string, string> = {
   created: "bg-slate-100 text-slate-700",
   processing: "bg-blue-100 text-blue-700",
