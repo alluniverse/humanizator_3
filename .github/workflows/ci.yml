@@ -1,0 +1,146 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Fast job: lint + unit tests (no services required)
+  # -------------------------------------------------------------------------
+  lint-and-unit:
+    name: Lint & Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev]"
+          python -m spacy download en_core_web_sm
+          python -m spacy download ru_core_news_sm
+
+      - name: Lint with ruff
+        run: ruff check backend/
+
+      - name: Run unit tests
+        run: |
+          pytest backend/tests/unit/ -v --tb=short \
+            --cov=backend \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml
+        env:
+          DATABASE_URL: "postgresql+asyncpg://humanizator:humanizator@localhost:5432/humanizator"
+          REDIS_URL: "redis://localhost:6379/0"
+          REDIS_CACHE_URL: "redis://localhost:6379/1"
+          JWT_SECRET_KEY: "test-secret-key-for-ci"
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  # -------------------------------------------------------------------------
+  # Integration + E2E tests (requires Postgres + Redis)
+  # -------------------------------------------------------------------------
+  integration:
+    name: Integration & E2E Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: humanizator
+          POSTGRES_PASSWORD: humanizator
+          POSTGRES_DB: humanizator
+        options: >-
+          --health-cmd "pg_isready -U humanizator -d humanizator"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev]"
+          python -m spacy download en_core_web_sm
+          python -m spacy download ru_core_news_sm
+
+      - name: Apply DB migrations
+        run: alembic upgrade head
+        working-directory: backend
+        env:
+          DATABASE_URL_SYNC: "postgresql://humanizator:humanizator@localhost:5432/humanizator"
+          DATABASE_URL: "postgresql+asyncpg://humanizator:humanizator@localhost:5432/humanizator"
+
+      - name: Run integration tests
+        run: |
+          pytest backend/tests/integration/ -v --tb=short -x
+        env:
+          DATABASE_URL: "postgresql+asyncpg://humanizator:humanizator@localhost:5432/humanizator"
+          DATABASE_URL_SYNC: "postgresql://humanizator:humanizator@localhost:5432/humanizator"
+          REDIS_URL: "redis://localhost:6379/0"
+          REDIS_CACHE_URL: "redis://localhost:6379/1"
+          JWT_SECRET_KEY: "test-secret-key-for-ci"
+          OPENAI_API_KEY: "sk-test-placeholder"
+
+      - name: Run E2E tests
+        run: |
+          pytest backend/tests/e2e/ -v --tb=short -x
+        env:
+          DATABASE_URL: "postgresql+asyncpg://humanizator:humanizator@localhost:5432/humanizator"
+          DATABASE_URL_SYNC: "postgresql://humanizator:humanizator@localhost:5432/humanizator"
+          REDIS_URL: "redis://localhost:6379/0"
+          REDIS_CACHE_URL: "redis://localhost:6379/1"
+          JWT_SECRET_KEY: "test-secret-key-for-ci"
+          OPENAI_API_KEY: "sk-test-placeholder"
+
+  # -------------------------------------------------------------------------
+  # Docker build smoke test
+  # -------------------------------------------------------------------------
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: lint-and-unit
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -f docker/Dockerfile -t humanizator:ci .

@@ -22,6 +22,7 @@ from api.schemas.library import (
     StyleSampleUpdate,
 )
 from application.services.quality_tiering import quality_tiering_service
+from application.services.style_conflict_detector import style_conflict_detector
 from domain.enums import QualityTier
 from infrastructure.db.models import StyleLibrary, StyleSample
 from infrastructure.db.session import get_async_session
@@ -232,10 +233,12 @@ async def delete_sample(
 async def get_library_diagnostics(
     library_id: uuid.UUID,
     session: AsyncSession = Depends(get_async_session),
+    ctx: TenantContext = Depends(get_current_tenant),
 ) -> LibraryDiagnostics:
     library = await session.get(StyleLibrary, library_id)
     if not library:
         raise HTTPException(status_code=404, detail="Library not found")
+    _check_library_access(library, ctx)
 
     result = await session.execute(
         select(StyleSample).where(StyleSample.library_id == library_id)
@@ -245,6 +248,31 @@ async def get_library_diagnostics(
         [{"quality_tier": s.quality_tier} for s in samples]
     )
     return LibraryDiagnostics(**diag)
+
+
+@router.get("/{library_id}/style-conflicts")
+async def get_style_conflicts(
+    library_id: uuid.UUID,
+    outlier_threshold: float = 2.0,
+    session: AsyncSession = Depends(get_async_session),
+    ctx: TenantContext = Depends(get_current_tenant),
+) -> dict[str, Any]:
+    """Detect stylistically conflicting samples in the library.
+
+    Returns outlier samples whose stylometric features (burstiness, sentence
+    length, TTR, formality) deviate significantly from the library median.
+    """
+    library = await session.get(StyleLibrary, library_id)
+    if not library:
+        raise HTTPException(status_code=404, detail="Library not found")
+    _check_library_access(library, ctx)
+
+    result = await session.execute(
+        select(StyleSample).where(StyleSample.library_id == library_id)
+    )
+    samples = result.scalars().all()
+    sample_dicts = [{"id": str(s.id), "content": s.content} for s in samples]
+    return style_conflict_detector.detect_conflicts(sample_dicts, outlier_threshold=outlier_threshold)
 
 
 async def _refresh_library_quality(library_id: uuid.UUID, session: AsyncSession) -> None:

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from application.services.evaluation_engine import evaluation_engine
 from application.services.grammar_layer import grammar_layer
+from application.services.hallucination_detector import hallucination_detector
 from application.services.holistic_ranker import holistic_ranker
 from application.services.structural_polishing import structural_polishing
 from application.services.style_guidance import style_guidance_engine
@@ -213,3 +214,27 @@ async def get_pairwise(
         task.original_text,
     )
     return {"task_id": str(task_id), "pairwise": result}
+
+
+@router.post("/{task_id}/hallucination-check")
+async def check_hallucinations(
+    task_id: uuid.UUID,
+    rewritten_text: str,
+    semantic_threshold: float = 0.60,
+    session: AsyncSession = Depends(get_async_session),
+) -> dict[str, Any]:
+    """Run hallucination and artifact detection on a rewrite variant.
+
+    Checks entity drift, semantic drift, structural artifacts, and length ratio.
+    Returns `passed=True` if the variant passes all critical checks.
+    """
+    task = await session.get(RewriteTask, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    result = hallucination_detector.detect(
+        original=task.original_text,
+        rewritten=rewritten_text,
+        semantic_threshold=semantic_threshold,
+    )
+    return {"task_id": str(task_id), **result}

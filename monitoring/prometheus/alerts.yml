@@ -1,0 +1,66 @@
+groups:
+  - name: humanizator_api
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          rate(http_requests_total{status=~"5.."}[5m])
+          / rate(http_requests_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High API error rate ({{ $value | humanizePercentage }})"
+          description: "Error rate exceeds 5% for 2 minutes on {{ $labels.instance }}"
+
+      - alert: SlowResponseTime
+        expr: |
+          histogram_quantile(0.95,
+            rate(http_request_duration_seconds_bucket[5m])
+          ) > 2.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow API response time (p95 = {{ $value }}s)"
+          description: "95th percentile latency exceeds 2s for 5 minutes"
+
+      - alert: RewriteQueueBacklog
+        expr: |
+          celery_queue_length{queue="celery"} > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Rewrite task queue backlog ({{ $value }} tasks)"
+          description: "More than 100 tasks queued for 5 minutes — workers may be overloaded"
+
+      - alert: HighRateLimitRejections
+        expr: |
+          rate(http_requests_total{status="429"}[5m]) > 10
+        for: 1m
+        labels:
+          severity: info
+        annotations:
+          summary: "High rate-limit rejection rate ({{ $value }}/s)"
+          description: "More than 10 rate-limited requests per second"
+
+  - name: humanizator_infrastructure
+    rules:
+      - alert: AppDown
+        expr: up{job="humanizator_api"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Humanizator API is down"
+          description: "The API has been unreachable for 30 seconds"
+
+      - alert: HighMemoryUsage
+        expr: |
+          process_resident_memory_bytes{job="humanizator_api"} > 2e9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage ({{ $value | humanize1024 }}B)"
+          description: "Process RSS exceeds 2GB — possible memory leak from ML model loading"
