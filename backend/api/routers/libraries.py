@@ -159,6 +159,24 @@ async def add_sample(
     return sample
 
 
+@router.get("/{library_id}/samples", response_model=list[StyleSampleRead])
+async def list_samples(
+    library_id: uuid.UUID,
+    session: AsyncSession = Depends(get_async_session),
+    ctx: TenantContext = Depends(get_current_tenant),
+) -> list[StyleSample]:
+    library = await session.get(StyleLibrary, library_id)
+    if not library:
+        raise HTTPException(status_code=404, detail="Library not found")
+    _check_library_access(library, ctx)
+    result = await session.execute(
+        select(StyleSample)
+        .where(StyleSample.library_id == library_id)
+        .order_by(StyleSample.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
 @router.post("/{library_id}/samples/bulk", response_model=list[StyleSampleRead], status_code=status.HTTP_201_CREATED)
 async def bulk_add_samples(
     library_id: uuid.UUID,
