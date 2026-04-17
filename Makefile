@@ -85,3 +85,53 @@ status:
         backend-start worker-start frontend-start \
         up restart stop \
         logs-backend logs-worker logs-frontend status
+# Database management targets (append to main Makefile)
+
+# ── Database Backup & Restore ────────────────────────────────────────────────
+
+DB_BACKUP_DIR := $(CURDIR)/backups
+DB_CONTAINER := humanizator_3-db-1
+DB_USER := humanizator
+DB_NAME := humanizator
+
+.PHONY: db-backup db-restore db-reset db-seed db-status
+
+db-backup:
+	@mkdir -p $(DB_BACKUP_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	FILE="$(DB_BACKUP_DIR)/humanizator_$${TIMESTAMP}.sql"; \
+	docker exec $(DB_CONTAINER) pg_dump -U $(DB_USER) -d $(DB_NAME) --no-owner --no-privileges > "$$FILE"; \
+	echo "Backup: $$FILE ($$(du -h "$$FILE" | cut -f1))"
+
+db-restore:
+	@if [ -z "$(FILE)" ]; then \
+		echo "Usage: make db-restore FILE=backups/humanizator_YYYYMMDD_HHMMSS.sql"; \
+		echo "Available backups:"; \
+		ls -1t $(DB_BACKUP_DIR)/*.sql 2>/dev/null | head -10 || echo "  (none)"; \
+		exit 1; \
+	fi
+	@echo "Restoring from: $(FILE)"
+	@docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) -d $(DB_NAME) < $(FILE)
+	@echo "Restore complete."
+
+db-reset:
+	@echo "WARNING: This will DELETE ALL DATA!"
+	@docker exec $(DB_CONTAINER) psql -U $(DB_USER) -d postgres \
+		-c "DROP DATABASE IF EXISTS $(DB_NAME);" \
+		-c "CREATE DATABASE $(DB_NAME);"
+	@cd $(CURDIR)/backend && source $(CURDIR)/.venv/bin/activate && \
+		set -a && source $(CURDIR)/.env && set +a && \
+		PYTHONPATH=$(CURDIR)/backend alembic upgrade head
+	@echo "Database reset. Run 'make db-seed' to add default data."
+
+db-seed:
+	@bash $(CURDIR)/scripts/db-seed.sh
+
+db-status:
+	@echo "=== Database Tables ==="
+	@docker exec $(DB_CONTAINER) psql -U $(DB_USER) -d $(DB_NAME) \
+		-c "SELECT tablename, pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) as size FROM pg_tables WHERE schemaname='public' ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;"
+	@echo ""
+	@echo "=== Row Counts ==="
+	@docker exec $(DB_CONTAINER) psql -U $(DB_USER) -d $(DB_NAME) \
+		-c "SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname='public' ORDER BY relname;"

@@ -185,3 +185,4 @@ pnpm-debug.log*
 .dolt/
 *.db
 .beads-credential-key
+backups/
