@@ -1,5 +1,7 @@
-VENV    := .venv/bin
-BACKEND := backend
+SHELL   := /bin/bash
+CURDIR  := $(shell pwd)
+VENV    := $(CURDIR)/.venv/bin
+BACKEND := $(CURDIR)/backend
 LOGS    := /tmp
 
 # ── Infra (Docker) ────────────────────────────────────────────────────────────
@@ -19,32 +21,20 @@ infra-down:
 # ── Migrations ────────────────────────────────────────────────────────────────
 
 migrate:
-	cd $(BACKEND) && source ../$(VENV)/activate && \
-	  set -a && source ../.env && set +a && \
+	cd $(BACKEND) && source $(VENV)/activate && \
+	  set -a && source $(CURDIR)/.env && set +a && \
 	  alembic upgrade head
 
 # ── App processes ─────────────────────────────────────────────────────────────
 
 backend-start:
-	@pkill -f "uvicorn api.main:app" 2>/dev/null || true
-	cd $(BACKEND) && source ../$(VENV)/activate && \
-	  set -a && source ../.env && set +a && \
-	  uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload \
-	  > $(LOGS)/uvicorn.log 2>&1 & \
-	echo "Backend PID=$$! → $(LOGS)/uvicorn.log"
+	@bash scripts/start-backend.sh
 
 worker-start:
-	@pkill -f "celery.*async_tasks" 2>/dev/null || true
-	cd $(BACKEND) && source ../$(VENV)/activate && \
-	  set -a && source ../.env && set +a && \
-	  celery -A async_tasks.celery_app worker --loglevel=info \
-	  > $(LOGS)/celery.log 2>&1 & \
-	echo "Celery PID=$$! → $(LOGS)/celery.log"
+	@bash scripts/start-worker.sh
 
 frontend-start:
-	@pkill -f "next dev" 2>/dev/null || true
-	cd frontend && npm run dev > $(LOGS)/nextdev.log 2>&1 & \
-	echo "Frontend PID=$$! → $(LOGS)/nextdev.log"
+	@bash scripts/start-frontend.sh
 
 # ── Composite targets ─────────────────────────────────────────────────────────
 
@@ -61,9 +51,10 @@ restart: backend-start worker-start frontend-start
 	@echo "  Frontend: http://localhost:3000"
 
 stop:
-	@pkill -f "uvicorn api.main:app" 2>/dev/null || true
-	@pkill -f "celery.*async_tasks" 2>/dev/null || true
-	@pkill -f "next dev" 2>/dev/null || true
+	@kill $$(cat $(LOGS)/uvicorn.pid 2>/dev/null) 2>/dev/null || true
+	@kill $$(cat $(LOGS)/celery.pid 2>/dev/null) 2>/dev/null || true
+	@kill $$(cat $(LOGS)/nextdev.pid 2>/dev/null) 2>/dev/null || true
+	@rm -f $(LOGS)/uvicorn.pid $(LOGS)/celery.pid $(LOGS)/nextdev.pid
 	$(MAKE) infra-stop
 	@echo "All services stopped."
 
