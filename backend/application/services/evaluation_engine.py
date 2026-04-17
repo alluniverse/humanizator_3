@@ -5,11 +5,6 @@ from __future__ import annotations
 import math
 from typing import Any
 
-import spacy
-import torch
-from bert_score import score as bert_score
-from transformers import GPT2LMHeadModel, GPT2Tokenizer
-
 from adapters.llm import OpenAIProvider
 from infrastructure.config import settings
 
@@ -18,17 +13,33 @@ class EvaluationEngine:
     """Computes multi-layer evaluation metrics for rewrite variants."""
 
     def __init__(self) -> None:
-        self._nlp_en = spacy.load("en_core_web_sm")
-        self._nlp_ru = spacy.load("ru_core_news_sm")
-        self._tokenizer = GPT2Tokenizer.from_pretrained(settings.perplexity_model)
-        self._ppl_model = GPT2LMHeadModel.from_pretrained(settings.perplexity_model)
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        self._ppl_model = self._ppl_model.to(device).eval()
-        self._device = device
+        self._nlp_en: Any = None
+        self._nlp_ru: Any = None
+        self._tokenizer: Any = None
+        self._ppl_model: Any = None
+        self._device: str | None = None
         self._llm = OpenAIProvider()
 
-    def _get_nlp(self, language: str) -> spacy.Language:
-        return self._nlp_ru if language == "ru" else self._nlp_en
+    def _get_nlp(self, language: str) -> Any:
+        import spacy
+        if language == "ru":
+            if self._nlp_ru is None:
+                self._nlp_ru = spacy.load("ru_core_news_sm")
+            return self._nlp_ru
+        if self._nlp_en is None:
+            self._nlp_en = spacy.load("en_core_web_sm")
+        return self._nlp_en
+
+    def _get_ppl_model(self) -> tuple[Any, Any, str]:
+        if self._ppl_model is None:
+            import torch
+            from transformers import GPT2LMHeadModel, GPT2Tokenizer
+            self._tokenizer = GPT2Tokenizer.from_pretrained(settings.perplexity_model)
+            model = GPT2LMHeadModel.from_pretrained(settings.perplexity_model)
+            device = "cpu"  # force CPU to avoid OOM — GPU reserved for sentence-transformers
+            self._ppl_model = model.to(device).eval()
+            self._device = device
+        return self._tokenizer, self._ppl_model, self._device
 
     def absolute_metrics(
         self,
@@ -43,7 +54,9 @@ class EvaluationEngine:
 
         # BERTScore
         try:
-            P, R, F1 = bert_score([variant], [original], lang=language, verbose=False, device=self._device)
+            from bert_score import score as bert_score
+            _, _, device, = self._get_ppl_model()
+            P, R, F1 = bert_score([variant], [original], lang=language, verbose=False, device=device)
             bertscore_f1 = F1.item()
         except Exception:
             bertscore_f1 = 0.0
@@ -149,9 +162,11 @@ Variant B:
         return {"winner": winner, "reason": reason}
 
     def _compute_perplexity(self, text: str) -> float:
-        inputs = self._tokenizer(text, return_tensors="pt").to(self._device)
+        import torch
+        tokenizer, model, device = self._get_ppl_model()
+        inputs = tokenizer(text, return_tensors="pt").to(device)
         with torch.no_grad():
-            outputs = self._ppl_model(inputs["input_ids"], labels=inputs["input_ids"])
+            outputs = model(inputs["input_ids"], labels=inputs["input_ids"])
             return torch.exp(outputs.loss).item()
 
 

@@ -16,11 +16,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import torch
-import torch.nn.functional as F
-from sentence_transformers import SentenceTransformer, util
-from transformers import AutoModel, AutoTokenizer
-
 from infrastructure.config import settings
 
 logger = logging.getLogger(__name__)
@@ -30,18 +25,30 @@ class HolisticLexicalSubstitutionRanker:
     """Ranks lexical substitutions using holistic sentence semantics.
 
     For candidate selection in style-guided rewrite and post-processing polish.
+    Models are loaded lazily on first use (DeBERTa is large — avoid startup OOM).
     """
 
     def __init__(self) -> None:
+        self._tokenizer: Any = None
+        self._model: Any = None
+        self._device: str = "cpu"
+        self._sentence_model: Any = None
+        self._num_layers: int = 0
+
+    def _ensure_loaded(self) -> None:
+        if self._model is not None:
+            return
+        import torch
+        from sentence_transformers import SentenceTransformer
+        from transformers import AutoModel, AutoTokenizer
         self._tokenizer = AutoTokenizer.from_pretrained(settings.deberta_model)
         self._model = AutoModel.from_pretrained(
             settings.deberta_model,
             output_attentions=True,
             output_hidden_states=True,
         )
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        self._model = self._model.to(device).eval()
-        self._device = device
+        self._device = "cpu"  # DeBERTa is large — use CPU to avoid VRAM OOM
+        self._model = self._model.to(self._device).eval()
         self._sentence_model = SentenceTransformer(settings.sentence_transformer_model)
         self._num_layers = self._model.config.num_hidden_layers
 
@@ -68,6 +75,7 @@ class HolisticLexicalSubstitutionRanker:
         Returns:
             Dict with ranked list and scores.
         """
+        self._ensure_loaded()
         if not candidates or target_index >= len(candidates):
             return {"ranked": [], "target_index": target_index}
 
@@ -118,6 +126,7 @@ class HolisticLexicalSubstitutionRanker:
         Returns:
             List of candidates sorted by descending score.
         """
+        self._ensure_loaded()
         words = original_sentence.split()
         if not (0 <= target_index < len(words)):
             return []

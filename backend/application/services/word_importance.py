@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import torch
-from transformers import GPT2LMHeadModel, GPT2Tokenizer
+from typing import Any
 
 from infrastructure.config import settings
 
@@ -14,11 +13,18 @@ class WordImportanceScorer:
     """Dual-aspect word importance scoring."""
 
     def __init__(self) -> None:
+        self._tokenizer: Any = None
+        self._model: Any = None
+        self._device: str = "cpu"
+
+    def _ensure_loaded(self) -> None:
+        if self._model is not None:
+            return
+        import torch
+        from transformers import GPT2LMHeadModel, GPT2Tokenizer
         self._tokenizer = GPT2Tokenizer.from_pretrained(settings.perplexity_model)
-        self._model = GPT2LMHeadModel.from_pretrained(settings.perplexity_model)
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        self._model = self._model.to(device).eval()
-        self._device = device
+        self._model = GPT2LMHeadModel.from_pretrained(settings.perplexity_model).to("cpu").eval()
+        self._device = "cpu"
 
     def score_text(
         self,
@@ -31,6 +37,8 @@ class WordImportanceScorer:
         For MVP we implement perplexity-based importance only,
         gradient-based requires a surrogate classifier which is optional.
         """
+        self._ensure_loaded()
+        import torch
         tokens = self._tokenizer.tokenize(text)
         token_ids = self._tokenizer.encode(text, return_tensors="pt").to(self._device)
 
@@ -60,7 +68,8 @@ class WordImportanceScorer:
 
         return scores
 
-    def _compute_perplexity(self, token_ids: torch.Tensor) -> float:
+    def _compute_perplexity(self, token_ids: Any) -> float:
+        import torch
         with torch.no_grad():
             outputs = self._model(token_ids, labels=token_ids)
             return torch.exp(outputs.loss).item()

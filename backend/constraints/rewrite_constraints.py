@@ -5,9 +5,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-import spacy
-from sentence_transformers import SentenceTransformer, util
-
 from infrastructure.config import settings
 
 
@@ -15,12 +12,25 @@ class RewriteConstraintLayer:
     """Enforces rewrite constraints based on docs/2404.01907v1 (HMGC)."""
 
     def __init__(self) -> None:
-        self._nlp_en = spacy.load("en_core_web_sm")
-        self._nlp_ru = spacy.load("ru_core_news_sm")
-        self._sentence_model = SentenceTransformer(settings.sentence_transformer_model)
+        self._nlp_en: Any = None
+        self._nlp_ru: Any = None
+        self._sentence_model: Any = None
 
-    def _get_nlp(self, language: str) -> spacy.Language:
-        return self._nlp_ru if language == "ru" else self._nlp_en
+    def _get_nlp(self, language: str) -> Any:
+        import spacy
+        if language == "ru":
+            if self._nlp_ru is None:
+                self._nlp_ru = spacy.load("ru_core_news_sm")
+            return self._nlp_ru
+        if self._nlp_en is None:
+            self._nlp_en = spacy.load("en_core_web_sm")
+        return self._nlp_en
+
+    def _get_sentence_model(self) -> Any:
+        if self._sentence_model is None:
+            from sentence_transformers import SentenceTransformer
+            self._sentence_model = SentenceTransformer(settings.sentence_transformer_model)
+        return self._sentence_model
 
     def check_pos_constraint(
         self,
@@ -96,8 +106,10 @@ class RewriteConstraintLayer:
         orig_chunks = self._chunk_text(original, window_tokens)
         rewr_chunks = self._chunk_text(rewritten, window_tokens)
 
-        embeddings_orig = self._sentence_model.encode(orig_chunks, convert_to_tensor=True)
-        embeddings_rewr = self._sentence_model.encode(rewr_chunks, convert_to_tensor=True)
+        from sentence_transformers import util
+        model = self._get_sentence_model()
+        embeddings_orig = model.encode(orig_chunks, convert_to_tensor=True)
+        embeddings_rewr = model.encode(rewr_chunks, convert_to_tensor=True)
 
         # Pairwise min similarity across aligned chunks
         min_sim = 1.0
