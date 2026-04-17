@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from application.services.evaluation_engine import evaluation_engine
 from application.services.grammar_layer import grammar_layer
+from application.services.adversarial_robustness import adversarial_robustness_evaluator
 from application.services.hallucination_detector import hallucination_detector
 from application.services.holistic_ranker import holistic_ranker
 from application.services.structural_polishing import structural_polishing
@@ -235,6 +236,35 @@ async def check_hallucinations(
     result = hallucination_detector.detect(
         original=task.original_text,
         rewritten=rewritten_text,
+        semantic_threshold=semantic_threshold,
+    )
+    return {"task_id": str(task_id), **result}
+
+
+@router.post("/{task_id}/adversarial-robustness")
+async def check_adversarial_robustness(
+    task_id: uuid.UUID,
+    variant_text: str,
+    attacks: list[str] | None = None,
+    semantic_threshold: float = 0.75,
+    session: AsyncSession = Depends(get_async_session),
+) -> dict[str, Any]:
+    """Evaluate adversarial robustness of a rewrite variant.
+
+    Applies a suite of adversarial perturbations (char substitution, word deletion,
+    sentence shuffle, tag injection, negation flip) and measures how stable the
+    semantic embedding remains under each attack.
+
+    Returns `passed=True` if mean similarity across all attacks meets the threshold
+    and no individual attack drops below the threshold.
+    """
+    task = await session.get(RewriteTask, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    result = adversarial_robustness_evaluator.evaluate(
+        rewritten_text=variant_text,
+        attacks=attacks,
         semantic_threshold=semantic_threshold,
     )
     return {"task_id": str(task_id), **result}

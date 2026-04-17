@@ -13,6 +13,7 @@ from api.routers.rewrite import router as rewrite_router
 from api.routers.evaluation import router as evaluation_router
 from api.routers.presets import router as presets_router
 from api.routers.admin import router as admin_router
+from api.routers.hitl import router as hitl_router
 from infrastructure.cache.redis_client import redis_cache, redis_queue
 from infrastructure.config import settings
 from infrastructure.logging import configure_logging
@@ -46,3 +47,4 @@ app.include_router(rewrite_router)
 app.include_router(evaluation_router)
 app.include_router(presets_router)
 app.include_router(admin_router)
+app.include_router(hitl_router)
