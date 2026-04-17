@@ -20,6 +20,7 @@ class RewriteMode(str, Enum):
     CONSERVATIVE = "conservative"
     BALANCED = "balanced"
     EXPRESSIVE = "expressive"
+    PRECISION = "precision"
 
 
 class SemanticContractMode(str, Enum):
@@ -46,4 +47,7 @@ class LibraryCategory(str, Enum):
     ENTERTAINMENT = "entertainment"
     CINEMA = "cinema"
     MARKETING = "marketing"
+    SCIENCE = "science"
+    SOCIAL = "social"
     PERSONAL = "personal"
+    OTHER = "other"

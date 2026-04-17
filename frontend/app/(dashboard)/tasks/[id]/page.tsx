@@ -13,6 +13,8 @@ import { ArrowLeft, Play, ChevronDown, ChevronUp, Shield, BarChart2, CheckSquare
 import Link from "next/link";
 import toast from "react-hot-toast";
 
+const ACTIVE_STATUSES = new Set(["analyzing", "rewriting", "evaluating"]);
+
 export default function TaskDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -25,7 +27,7 @@ export default function TaskDetailPage() {
     queryFn: () => rewriteApi.get(id),
     refetchInterval: (query) => {
       const status = (query.state.data as TaskDetail | undefined)?.status;
-      return status === "pending" || status === "running" ? 3000 : false;
+      return status && ACTIVE_STATUSES.has(status) ? 3000 : false;
     },
   });
 
@@ -91,7 +93,7 @@ export default function TaskDetailPage() {
               </Button>
             </Link>
           )}
-          {(task.status === "pending" || task.status === "failed") && (
+          {(task.status === "created" || task.status === "failed") && (
             <Button size="sm" onClick={() => runTask.mutate()} loading={runTask.isPending}>
               <Play className="h-4 w-4" />
               {task.status === "failed" ? "Перезапустить" : "Запустить"}
@@ -109,7 +111,7 @@ export default function TaskDetailPage() {
       </Card>
 
       {/* Status info */}
-      {task.status === "running" && (
+      {ACTIVE_STATUSES.has(task.status) && (
         <div className="flex items-center gap-3 rounded-lg bg-blue-50 border border-blue-200 p-4">
           <Spinner className="h-5 w-5 text-blue-500" />
           <p className="text-sm text-blue-700">Задача выполняется... Страница обновится автоматически.</p>

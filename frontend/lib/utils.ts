@@ -59,7 +59,9 @@ export function extractErrorMessage(err: unknown, fallback = "Произошла
 
 export const STATUS_COLOR: Record<string, string> = {
   created: "bg-slate-100 text-slate-700",
-  processing: "bg-blue-100 text-blue-700",
+  analyzing: "bg-blue-100 text-blue-700",
+  rewriting: "bg-indigo-100 text-indigo-700",
+  evaluating: "bg-amber-100 text-amber-700",
   completed: "bg-green-100 text-green-800",
   failed: "bg-red-100 text-red-800",
 };

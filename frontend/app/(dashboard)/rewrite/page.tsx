@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { librariesApi, rewriteApi } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -36,15 +37,18 @@ export default function RewritePage() {
   });
 
   const create = useMutation({
-    mutationFn: () =>
-      rewriteApi.create({
+    mutationFn: async () => {
+      const task = await rewriteApi.create({
         original_text: text,
         library_id: libraryId,
         rewrite_mode: mode,
         semantic_contract_mode: contractMode,
-      }),
+      });
+      await rewriteApi.run(task.id);
+      return task;
+    },
     onSuccess: (task) => {
-      toast.success("Задача создана");
+      toast.success("Задача создана и запущена");
       router.push(`/tasks/${task.id}`);
     },
     onError: (e: unknown) => {
@@ -97,7 +101,7 @@ export default function RewritePage() {
             {libList.length === 0 ? (
               <p className="text-sm text-amber-600">
                 Нет библиотек.{" "}
-                <a href="/libraries" className="underline">Создайте первую</a>
+                <Link href="/libraries" className="underline">Создайте первую</Link>
               </p>
             ) : (
               <>

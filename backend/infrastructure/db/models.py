@@ -137,7 +137,7 @@ class RewriteTask(Base):
     __tablename__ = "rewrite_tasks"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default_factory=uuid.uuid4, init=False)
-    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    project_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     library_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("style_libraries.id"), nullable=False)
     original_text: Mapped[str] = mapped_column(Text, nullable=False)
@@ -149,7 +149,7 @@ class RewriteTask(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default_factory=_now, server_default=func.now(), init=False)
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default_factory=_now, server_default=func.now(), onupdate=func.now(), init=False)
 
-    project: Mapped["Project"] = relationship(back_populates="tasks", init=False)
+    project: Mapped["Project | None"] = relationship(back_populates="tasks", init=False)
     variants: Mapped[list["RewriteVariant"]] = relationship(back_populates="task", lazy="selectin", init=False, cascade="all, delete-orphan")
     evaluation_reports: Mapped[list["EvaluationReport"]] = relationship(back_populates="task", lazy="selectin", init=False, cascade="all, delete-orphan")
 

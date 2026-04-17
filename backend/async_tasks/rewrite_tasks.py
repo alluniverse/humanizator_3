@@ -26,7 +26,21 @@ def _run_async(coro):
     try:
         return loop.run_until_complete(coro)
     finally:
+        try:
+            from infrastructure.db.session import async_engine
+
+            loop.run_until_complete(async_engine.dispose())
+        except Exception:
+            logger.debug("Failed to dispose async engine after Celery task", exc_info=True)
         loop.close()
+
+
+async def _run_stage(coro, task_id: str, stage: str) -> dict[str, Any]:
+    try:
+        return await coro
+    except Exception as exc:
+        await _mark_failed(task_id, f"{stage}: {exc}")
+        raise
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=10)
@@ -53,10 +67,9 @@ def stage_analyze(self, task_id: str) -> dict[str, Any]:
     """Stage 1: Analyze input + build semantic contract."""
     logger.info("[analyze] task=%s", task_id)
     try:
-        return _run_async(_do_analyze(task_id))
+        return _run_async(_run_stage(_do_analyze(task_id), task_id, "analyze"))
     except Exception as exc:
         logger.exception("[analyze] failed task=%s", task_id)
-        _run_async(_mark_failed(task_id, f"analyze: {exc}"))
         raise self.retry(exc=exc)
 
 
@@ -66,10 +79,9 @@ def stage_rewrite(self, context: dict[str, Any]) -> dict[str, Any]:
     task_id = context["task_id"]
     logger.info("[rewrite] task=%s", task_id)
     try:
-        return _run_async(_do_rewrite(context))
+        return _run_async(_run_stage(_do_rewrite(context), task_id, "rewrite"))
     except Exception as exc:
         logger.exception("[rewrite] failed task=%s", task_id)
-        _run_async(_mark_failed(task_id, f"rewrite: {exc}"))
         raise self.retry(exc=exc)
 
 
@@ -79,10 +91,9 @@ def stage_evaluate(self, context: dict[str, Any]) -> dict[str, Any]:
     task_id = context["task_id"]
     logger.info("[evaluate] task=%s", task_id)
     try:
-        return _run_async(_do_evaluate(context))
+        return _run_async(_run_stage(_do_evaluate(context), task_id, "evaluate"))
     except Exception as exc:
         logger.exception("[evaluate] failed task=%s", task_id)
-        _run_async(_mark_failed(task_id, f"evaluate: {exc}"))
         raise self.retry(exc=exc)
 
 
@@ -92,10 +103,9 @@ def stage_complete(self, context: dict[str, Any]) -> dict[str, Any]:
     task_id = context["task_id"]
     logger.info("[complete] task=%s", task_id)
     try:
-        return _run_async(_do_complete(context))
+        return _run_async(_run_stage(_do_complete(context), task_id, "complete"))
     except Exception as exc:
         logger.exception("[complete] failed task=%s", task_id)
-        _run_async(_mark_failed(task_id, f"complete: {exc}"))
         raise
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from openai import AsyncOpenAI
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
 
 from adapters.llm.base import LLMProvider
 from infrastructure.config import settings
@@ -19,13 +19,20 @@ class OpenAIProvider(LLMProvider):
     """OpenAI-compatible LLM provider."""
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None) -> None:
+        resolved_api_key = api_key or settings.openai_api_key
+        self._has_api_key = bool(resolved_api_key)
+        self._base_url = base_url or settings.openai_base_url
         self._client = AsyncOpenAI(
-            api_key=api_key or settings.openai_api_key or "",
-            base_url=base_url or settings.openai_base_url,
+            api_key=resolved_api_key or "missing-api-key",
+            base_url=self._base_url,
         )
         self._default_model = settings.openai_model
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_not_exception_type(RuntimeError),
+    )
     async def generate(
         self,
         prompt: str,
@@ -34,6 +41,8 @@ class OpenAIProvider(LLMProvider):
         max_tokens: int = 1024,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        if not self._has_api_key and self._base_url is None:
+            raise RuntimeError("OPENAI_API_KEY is not configured")
         response = await self._client.chat.completions.create(
             model=model or self._default_model,
             messages=[{"role": "user", "content": prompt}],
@@ -63,7 +72,11 @@ class OpenAIProvider(LLMProvider):
             "model": response.model,
         }
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_not_exception_type(RuntimeError),
+    )
     async def generate_multiple(
         self,
         prompt: str,
@@ -73,6 +86,8 @@ class OpenAIProvider(LLMProvider):
         max_tokens: int = 1024,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
+        if not self._has_api_key and self._base_url is None:
+            raise RuntimeError("OPENAI_API_KEY is not configured")
         response = await self._client.chat.completions.create(
             model=model or self._default_model,
             messages=[{"role": "user", "content": prompt}],

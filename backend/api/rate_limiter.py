@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import APIKeyHeader
 
+from infrastructure.auth.jwt import decode_access_token
 from infrastructure.cache.redis_client import redis_cache
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,17 @@ async def _increment_counter(key: str, window_seconds: int) -> int:
 
 def _get_tenant_id(request: Request, api_key: str | None) -> str:
     """Derive tenant identifier from API key or IP."""
+    authorization = request.headers.get("Authorization", "")
+    if authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+        try:
+            payload = decode_access_token(token)
+            if payload.get("sub"):
+                return f"user:{payload['sub']}"
+        except Exception:
+            # Auth dependencies will reject invalid tokens; fail open here so
+            # the rate limiter does not mask the real authentication error.
+            pass
     if api_key:
         return f"key:{api_key[:16]}"
     forwarded = request.headers.get("X-Forwarded-For")

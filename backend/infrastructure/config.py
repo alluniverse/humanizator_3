@@ -60,5 +60,12 @@ class Settings(BaseSettings):
             raise ValueError(f"log_level must be one of {allowed}")
         return upper
 
+    @field_validator("openai_api_key", "openai_base_url", mode="before")
+    @classmethod
+    def _blank_openai_values_to_none(cls, value: str | None) -> str | None:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
 
 settings = Settings()

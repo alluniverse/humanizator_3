@@ -24,7 +24,7 @@ class RewriteTaskRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    project_id: uuid.UUID
+    project_id: uuid.UUID | None
     user_id: uuid.UUID | None
     library_id: uuid.UUID
     original_text: str
@@ -35,6 +35,17 @@ class RewriteTaskRead(BaseModel):
     error_message: str | None
     created_at: datetime.datetime
     updated_at: datetime.datetime
+
+
+class RewriteVariantRead(BaseModel):
+    id: uuid.UUID
+    mode: RewriteMode
+    rewritten_text: str
+    variant_index: int
+    review_status: str
+    scores: dict[str, Any]
+    is_valid: bool
+    created_at: datetime.datetime
 
 
 class SemanticContractRead(BaseModel):

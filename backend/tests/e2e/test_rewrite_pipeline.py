@@ -8,10 +8,15 @@ Tenant isolation tests verify that user B cannot access user A's resources.
 
 from __future__ import annotations
 
+import uuid
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
+
+from domain.enums import RewriteMode
+from infrastructure.db.models import RewriteVariant
+from infrastructure.db.session import AsyncSessionLocal
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -151,6 +156,63 @@ async def test_task_status_progression(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_rewrite_list_run_and_variants_endpoints(async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Frontend contract: list tasks, run a task, then load saved variants."""
+    token = await _register_and_get_token(async_client, "frontend_contract@test.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    library_id = await _create_library_with_samples(async_client, headers)
+
+    resp = await async_client.post(
+        "/rewrite",
+        json={
+            "library_id": library_id,
+            "original_text": _INPUT_TEXT,
+            "rewrite_mode": "balanced",
+            "semantic_contract_mode": "balanced",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    task_id = resp.json()["id"]
+
+    resp = await async_client.get("/rewrite", headers=headers)
+    assert resp.status_code == 200
+    assert any(task["id"] == task_id for task in resp.json())
+
+    class FakeAsyncResult:
+        id = "fake-celery-id"
+
+    monkeypatch.setattr(
+        "api.routers.rewrite.process_rewrite_task.delay",
+        lambda task_id: FakeAsyncResult(),
+    )
+
+    resp = await async_client.post(f"/rewrite/{task_id}/run", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["queued"] is True
+    assert resp.json()["status"] == "analyzing"
+
+    async with AsyncSessionLocal() as session:
+        variant = RewriteVariant(
+            task_id=uuid.UUID(task_id),
+            mode=RewriteMode.BALANCED,
+            final_text="AI is reshaping technology in clear, practical ways.",
+            semantic_preservation_score=0.91,
+            style_match_score=0.82,
+        )
+        session.add(variant)
+        await session.commit()
+
+    resp = await async_client.get(f"/rewrite/{task_id}/variants", headers=headers)
+    assert resp.status_code == 200
+    variants = resp.json()
+    assert len(variants) == 1
+    assert variants[0]["rewritten_text"] == "AI is reshaping technology in clear, practical ways."
+    assert variants[0]["variant_index"] == 1
+    assert variants[0]["scores"]["semantic_similarity"] == 0.91
+
+
+@pytest.mark.asyncio
 async def test_tenant_isolation_library_access(async_client: AsyncClient) -> None:
     """User B cannot access user A's library."""
     token_a = await _register_and_get_token(async_client, "user_a_iso@test.com")
@@ -229,10 +291,12 @@ async def test_library_list_scoped_by_tenant(async_client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_unauthenticated_request_creates_task(async_client: AsyncClient) -> None:
     """Without auth, requests succeed but task has no user_id (anonymous dev mode)."""
+    headers = {"X-Forwarded-For": f"test-{uuid.uuid4()}"}
     # Create library without auth (anonymous)
     resp = await async_client.post(
         "/libraries",
         json={"name": "Anon Library", "category": "other", "language": "ru"},
+        headers=headers,
     )
     assert resp.status_code == 201
     library_id = resp.json()["id"]
@@ -245,6 +309,7 @@ async def test_unauthenticated_request_creates_task(async_client: AsyncClient) -
             "rewrite_mode": "balanced",
             "semantic_contract_mode": "balanced",
         },
+        headers=headers,
     )
     assert resp.status_code == 201
     assert resp.json()["status"] == "created"

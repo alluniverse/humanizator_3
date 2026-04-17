@@ -16,6 +16,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import torch
+import torch.nn.functional as torch_f
+from sentence_transformers import util
+
 from infrastructure.config import settings
 
 logger = logging.getLogger(__name__)
@@ -38,7 +42,6 @@ class HolisticLexicalSubstitutionRanker:
     def _ensure_loaded(self) -> None:
         if self._model is not None:
             return
-        import torch
         from sentence_transformers import SentenceTransformer
         from transformers import AutoModel, AutoTokenizer
         self._tokenizer = AutoTokenizer.from_pretrained(settings.deberta_model)
@@ -180,7 +183,7 @@ class HolisticLexicalSubstitutionRanker:
         """
         emb1 = self._get_weighted_embedding_attention(sent1)
         emb2 = self._get_weighted_embedding_attention(sent2)
-        return float(F.cosine_similarity(emb1, emb2, dim=-1).item())
+        return float(torch_f.cosine_similarity(emb1, emb2, dim=-1).item())
 
     def _ig_sentence_similarity(self, sent1: str, sent2: str) -> float:
         """Integrated Gradients based holistic similarity.
@@ -230,7 +233,7 @@ class HolisticLexicalSubstitutionRanker:
         ).mean(dim=0)  # (seq,)
 
         # Normalize (softmax excluding padding)
-        attn_weights = F.softmax(attn_weights, dim=0)  # (seq,)
+        attn_weights = torch_f.softmax(attn_weights, dim=0)  # (seq,)
 
         # Weighted sum: (hidden,)
         weighted = (token_repr * attn_weights.unsqueeze(-1)).sum(dim=0)
