@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input, Textarea } from "@/components/ui/input";
 import { PageSpinner, Spinner } from "@/components/ui/spinner";
 import { TIER_COLOR, formatDate, truncate } from "@/lib/utils";
-import { ArrowLeft, Plus, Trash2, Camera, BarChart2, Download, AlertCircle, CheckCircle2, X, Link2 } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Camera, BarChart2, Download, AlertCircle, CheckCircle2, X, Link2, Pencil, ChevronDown, ChevronUp, Check } from "lucide-react";
 import Link from "next/link";
 import toast from "react-hot-toast";
 
@@ -22,6 +22,9 @@ export default function LibraryDetailPage() {
   const [showAddUrl, setShowAddUrl] = useState(false);
   const [urlForm, setUrlForm] = useState({ url: "", splitParagraphs: true });
   const [sampleForm, setSampleForm] = useState({ content: "", author: "", title: "" });
+  const [expandedSample, setExpandedSample] = useState<string | null>(null);
+  const [editingSample, setEditingSample] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ content: "", author: "", title: "" });
   const [activeTab, setActiveTab] = useState<"samples" | "analytics" | "snapshots">("samples");
 
   const { data: library, isLoading } = useQuery({
@@ -74,6 +77,18 @@ export default function LibraryDetailPage() {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Ошибка парсинга";
       toast.error(msg);
     },
+  });
+
+  const updateSample = useMutation({
+    mutationFn: ({ sampleId, data }: { sampleId: string; data: Record<string, unknown> }) =>
+      librariesApi.updateSample(id, sampleId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["library-samples", id] });
+      qc.invalidateQueries({ queryKey: ["library", id] });
+      setEditingSample(null);
+      toast.success("Образец сохранён");
+    },
+    onError: () => toast.error("Ошибка сохранения"),
   });
 
   const deleteSample = useMutation({
@@ -256,26 +271,111 @@ export default function LibraryDetailPage() {
             <div className="py-16 text-center text-slate-400">Нет образцов. Добавьте первый.</div>
           ) : (
             <div className="space-y-2">
-              {sampleList.map((s) => (
-                <Card key={s.id}>
-                  <CardContent className="p-4 flex items-start gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        {s.quality_tier && <Badge className={`${TIER_COLOR[s.quality_tier]} text-xs`}>{s.quality_tier}</Badge>}
-                        {s.author && <span className="text-xs text-slate-500">{s.author}</span>}
-                        {s.title && <span className="text-xs text-slate-400">· {s.title}</span>}
+              {sampleList.map((s) => {
+                const isExpanded = expandedSample === s.id;
+                const isEditing = editingSample === s.id;
+
+                return (
+                  <Card key={s.id} className={isExpanded ? "ring-1 ring-indigo-200" : ""}>
+                    {/* Collapsed header — click to expand */}
+                    <CardContent className="p-4">
+                      <div
+                        className="flex items-start gap-3 cursor-pointer"
+                        onClick={() => {
+                          if (isEditing) return;
+                          setExpandedSample(isExpanded ? null : s.id);
+                        }}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            {s.quality_tier && <Badge className={`${TIER_COLOR[s.quality_tier]} text-xs`}>{s.quality_tier}</Badge>}
+                            {s.author && <span className="text-xs text-slate-500">{s.author}</span>}
+                            {s.title && <span className="text-xs text-slate-400 truncate max-w-[200px]">· {s.title}</span>}
+                          </div>
+                          <p className="text-sm text-slate-700 whitespace-pre-wrap">
+                            {isExpanded ? s.content : truncate(s.content, 180)}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1 flex-shrink-0 mt-0.5">
+                          {isExpanded ? (
+                            <ChevronUp className="h-4 w-4 text-slate-300" />
+                          ) : (
+                            <ChevronDown className="h-4 w-4 text-slate-300" />
+                          )}
+                        </div>
                       </div>
-                      <p className="text-sm text-slate-700 whitespace-pre-wrap">{truncate(s.content, 200)}</p>
-                    </div>
-                    <button
-                      onClick={() => deleteSample.mutate(s.id)}
-                      className="text-slate-300 hover:text-red-500 transition-colors flex-shrink-0 mt-1"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </CardContent>
-                </Card>
-              ))}
+
+                      {/* Expanded actions */}
+                      {isExpanded && !isEditing && (
+                        <div className="flex gap-2 mt-3 pt-3 border-t border-slate-100">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setEditingSample(s.id);
+                              setEditForm({ content: s.content, author: s.author ?? "", title: s.title ?? "" });
+                            }}
+                          >
+                            <Pencil className="h-3.5 w-3.5" /> Редактировать
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-red-500 border-red-200 hover:bg-red-50"
+                            onClick={() => {
+                              setExpandedSample(null);
+                              deleteSample.mutate(s.id);
+                            }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" /> Удалить
+                          </Button>
+                        </div>
+                      )}
+
+                      {/* Edit form */}
+                      {isEditing && (
+                        <div className="mt-3 pt-3 border-t border-slate-100 space-y-3">
+                          <Textarea
+                            label="Текст"
+                            rows={6}
+                            value={editForm.content}
+                            onChange={e => setEditForm(f => ({ ...f, content: e.target.value }))}
+                          />
+                          <div className="grid grid-cols-2 gap-3">
+                            <Input
+                              label="Автор"
+                              value={editForm.author}
+                              onChange={e => setEditForm(f => ({ ...f, author: e.target.value }))}
+                            />
+                            <Input
+                              label="Заголовок"
+                              value={editForm.title}
+                              onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))}
+                            />
+                          </div>
+                          <div className="flex gap-2 justify-end">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setEditingSample(null)}
+                            >
+                              Отмена
+                            </Button>
+                            <Button
+                              size="sm"
+                              loading={updateSample.isPending}
+                              disabled={!editForm.content.trim()}
+                              onClick={() => updateSample.mutate({ sampleId: s.id, data: editForm })}
+                            >
+                              <Check className="h-3.5 w-3.5" /> Сохранить
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           )}
         </div>
