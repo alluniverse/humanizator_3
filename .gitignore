@@ -49,6 +49,8 @@ MANIFEST
 # source code (not a Python packaging artifact). Keep it tracked.
 !web/lib/
 !web/lib/**
+!frontend/lib/
+!frontend/lib/**
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
