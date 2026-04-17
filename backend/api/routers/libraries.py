@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps.tenant import TenantContext, get_current_tenant
+from api.deps.tenant import TenantContext, get_current_tenant, require_existing_user
 from api.schemas.library import (
     BulkSampleImport,
     LibraryDiagnostics,
@@ -46,7 +46,7 @@ def _check_library_access(library: StyleLibrary, ctx: TenantContext) -> None:
 async def create_library(
     data: StyleLibraryCreate,
     session: AsyncSession = Depends(get_async_session),
-    ctx: TenantContext = Depends(get_current_tenant),
+    ctx: TenantContext = Depends(require_existing_user),
 ) -> StyleLibrary:
     library = StyleLibrary(
         name=data.name,

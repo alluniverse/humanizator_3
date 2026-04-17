@@ -19,8 +19,12 @@ import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from infrastructure.auth.jwt import decode_access_token
 from infrastructure.cache.redis_client import redis_cache
+from infrastructure.db.models import User
+from infrastructure.db.session import get_async_session
 
 logger = logging.getLogger(__name__)
 
@@ -121,4 +125,25 @@ async def require_tenant(
 ) -> TenantContext:
     """Strict variant — raises 401 if not authenticated."""
     ctx.user_id_or_raise  # raises if anonymous
+    return ctx
+
+
+async def require_existing_user(
+    ctx: TenantContext = Depends(get_current_tenant),
+    session: AsyncSession = Depends(get_async_session),
+) -> TenantContext:
+    """Verify that the authenticated user exists in the DB.
+
+    Raises 401 (not 500) when a valid JWT references a user that was
+    deleted or belongs to a wiped database — the frontend interceptor
+    then clears localStorage and redirects to /login.
+    """
+    if ctx.user_id is None:
+        return ctx
+    if await session.get(User, ctx.user_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found — please log in again",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return ctx

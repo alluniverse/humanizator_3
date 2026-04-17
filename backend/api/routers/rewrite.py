@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps.tenant import TenantContext, get_current_tenant
+from api.deps.tenant import TenantContext, get_current_tenant, require_existing_user
 from api.rate_limiter import rate_limit_requests, rate_limit_rewrite
 from api.schemas.rewrite import (
     RewriteTaskCreate,
@@ -49,7 +49,7 @@ async def _get_or_create_default_project(user_id: uuid.UUID, session: AsyncSessi
 async def create_rewrite_task(
     data: RewriteTaskCreate,
     session: AsyncSession = Depends(get_async_session),
-    ctx: TenantContext = Depends(get_current_tenant),
+    ctx: TenantContext = Depends(require_existing_user),
 ) -> RewriteTask:
     library = await session.get(StyleLibrary, data.library_id)
     if not library:
