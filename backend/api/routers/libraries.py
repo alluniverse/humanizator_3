@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps.tenant import TenantContext, get_current_tenant
@@ -67,12 +67,22 @@ async def create_library(
 async def list_libraries(
     session: AsyncSession = Depends(get_async_session),
     ctx: TenantContext = Depends(get_current_tenant),
-) -> list[StyleLibrary]:
-    query = select(StyleLibrary).where(StyleLibrary.status == "active")
+) -> list[StyleLibraryRead]:
+    query = (
+        select(StyleLibrary, func.count(StyleSample.id).label("sample_count"))
+        .outerjoin(StyleSample, StyleSample.library_id == StyleLibrary.id)
+        .where(StyleLibrary.status == "active")
+        .group_by(StyleLibrary.id)
+    )
     if ctx.user_id is not None:
         query = query.where(StyleLibrary.owner_id == ctx.user_id)
-    result = await session.execute(query)
-    return list(result.scalars().all())
+    rows = (await session.execute(query)).all()
+    result = []
+    for lib, count in rows:
+        obj = StyleLibraryRead.model_validate(lib)
+        obj.sample_count = count
+        result.append(obj)
+    return result
 
 
 @router.get("/{library_id}", response_model=StyleLibraryDetailRead)

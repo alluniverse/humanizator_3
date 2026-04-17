@@ -70,6 +70,7 @@ class StyleLibraryRead(BaseModel):
     is_single_voice: bool
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    sample_count: int = 0
 
 
 class StyleLibraryDetailRead(StyleLibraryRead):
