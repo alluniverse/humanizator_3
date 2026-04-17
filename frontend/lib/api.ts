@@ -71,6 +71,11 @@ export const librariesApi = {
 
   exportLib: (id: string) =>
     api.get(`/libraries/${id}/export`).then((r) => r.data),
+
+  addFromUrl: (id: string, url: string, splitParagraphs = true) =>
+    api
+      .post(`/libraries/${id}/samples/from-url`, { url, split_paragraphs: splitParagraphs })
+      .then((r) => r.data),
 };
 
 // ── Rewrite ───────────────────────────────────────────────────────────

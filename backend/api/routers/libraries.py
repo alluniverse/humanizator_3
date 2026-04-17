@@ -206,6 +206,79 @@ async def bulk_add_samples(
     return samples
 
 
+class ScrapeUrlRequest(BaseModel):
+    url: str
+    split_paragraphs: bool = True  # add each paragraph as a separate sample
+
+
+@router.post("/{library_id}/samples/from-url", status_code=status.HTTP_201_CREATED)
+async def add_samples_from_url(
+    library_id: uuid.UUID,
+    data: ScrapeUrlRequest,
+    session: AsyncSession = Depends(get_async_session),
+    ctx: TenantContext = Depends(get_current_tenant),
+) -> dict:
+    """Scrape an article URL and add its content as sample(s) to the library."""
+    from application.services.article_scraper import scrape_article
+
+    library = await session.get(StyleLibrary, library_id)
+    if not library:
+        raise HTTPException(status_code=404, detail="Library not found")
+    _check_library_access(library, ctx)
+
+    try:
+        article = scrape_article(data.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch URL: {exc}") from exc
+
+    samples: list[StyleSample] = []
+
+    if data.split_paragraphs:
+        for para in article.paragraphs:
+            tier = quality_tiering_service.tier_sample(para)
+            samples.append(
+                StyleSample(
+                    library_id=library_id,
+                    title=article.title,
+                    content=para,
+                    source=data.url,
+                    author=article.domain,
+                    language=library.language,
+                    quality_tier=tier,
+                )
+            )
+    else:
+        tier = quality_tiering_service.tier_sample(article.text)
+        samples.append(
+            StyleSample(
+                library_id=library_id,
+                title=article.title,
+                content=article.text,
+                source=data.url,
+                author=article.domain,
+                language=library.language,
+                quality_tier=tier,
+            )
+        )
+
+    session.add_all(samples)
+    await session.commit()
+    for s in samples:
+        await session.refresh(s)
+
+    await _refresh_library_quality(library_id, session)
+
+    return {
+        "added": len(samples),
+        "title": article.title,
+        "word_count": article.word_count,
+        "domain": article.domain,
+        "samples": [{"id": str(s.id), "quality_tier": s.quality_tier} for s in samples],
+    }
+
+
 @router.get("/{library_id}/samples/{sample_id}", response_model=StyleSampleRead)
 async def get_sample(
     library_id: uuid.UUID,

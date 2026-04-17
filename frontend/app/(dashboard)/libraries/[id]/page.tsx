@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input, Textarea } from "@/components/ui/input";
 import { PageSpinner, Spinner } from "@/components/ui/spinner";
 import { TIER_COLOR, formatDate, truncate } from "@/lib/utils";
-import { ArrowLeft, Plus, Trash2, Camera, BarChart2, Download, AlertCircle, CheckCircle2, X } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Camera, BarChart2, Download, AlertCircle, CheckCircle2, X, Link2 } from "lucide-react";
 import Link from "next/link";
 import toast from "react-hot-toast";
 
@@ -19,6 +19,8 @@ export default function LibraryDetailPage() {
   const router = useRouter();
   const qc = useQueryClient();
   const [showAddSample, setShowAddSample] = useState(false);
+  const [showAddUrl, setShowAddUrl] = useState(false);
+  const [urlForm, setUrlForm] = useState({ url: "", splitParagraphs: true });
   const [sampleForm, setSampleForm] = useState({ content: "", author: "", title: "" });
   const [activeTab, setActiveTab] = useState<"samples" | "analytics" | "snapshots">("samples");
 
@@ -55,6 +57,21 @@ export default function LibraryDetailPage() {
     },
     onError: (e: unknown) => {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Ошибка добавления";
+      toast.error(msg);
+    },
+  });
+
+  const addFromUrl = useMutation({
+    mutationFn: () => librariesApi.addFromUrl(id, urlForm.url, urlForm.splitParagraphs),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["library-samples", id] });
+      qc.invalidateQueries({ queryKey: ["library", id] });
+      setShowAddUrl(false);
+      setUrlForm({ url: "", splitParagraphs: true });
+      toast.success(`Добавлено ${data.added} образцов из «${data.title}»`);
+    },
+    onError: (e: unknown) => {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Ошибка парсинга";
       toast.error(msg);
     },
   });
@@ -158,11 +175,57 @@ export default function LibraryDetailPage() {
       {/* SAMPLES TAB */}
       {activeTab === "samples" && (
         <div className="space-y-4">
-          <div className="flex justify-end">
-            <Button onClick={() => setShowAddSample(true)} size="sm">
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setShowAddUrl(true); setShowAddSample(false); }}>
+              <Link2 className="h-4 w-4" /> По ссылке
+            </Button>
+            <Button size="sm" onClick={() => { setShowAddSample(true); setShowAddUrl(false); }}>
               <Plus className="h-4 w-4" /> Добавить образец
             </Button>
           </div>
+
+          {showAddUrl && (
+            <Card className="border-blue-200 bg-blue-50/30">
+              <CardContent className="p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-medium text-slate-800 flex items-center gap-2">
+                    <Link2 className="h-4 w-4 text-blue-500" /> Добавить из статьи
+                  </h4>
+                  <button onClick={() => setShowAddUrl(false)}><X className="h-4 w-4 text-slate-400" /></button>
+                </div>
+                <Input
+                  label="Ссылка на статью"
+                  value={urlForm.url}
+                  onChange={e => setUrlForm(f => ({ ...f, url: e.target.value }))}
+                  placeholder="https://www.bbc.com/news/articles/..."
+                />
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="split"
+                    checked={urlForm.splitParagraphs}
+                    onChange={e => setUrlForm(f => ({ ...f, splitParagraphs: e.target.checked }))}
+                    className="h-4 w-4 rounded border-slate-300 accent-indigo-600"
+                  />
+                  <label htmlFor="split" className="text-sm text-slate-600">
+                    Разбить на отдельные образцы (по абзацам)
+                  </label>
+                </div>
+                <p className="text-xs text-slate-400">Поддерживаются: BBC, Guardian и большинство новостных сайтов</p>
+                <div className="flex gap-2 justify-end">
+                  <Button variant="outline" size="sm" onClick={() => setShowAddUrl(false)}>Отмена</Button>
+                  <Button
+                    size="sm"
+                    loading={addFromUrl.isPending}
+                    disabled={!urlForm.url.trim()}
+                    onClick={() => addFromUrl.mutate()}
+                  >
+                    Парсить и добавить
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {showAddSample && (
             <Card className="border-indigo-200 bg-indigo-50/30">
