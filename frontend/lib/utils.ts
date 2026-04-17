@@ -31,19 +31,30 @@ export const MODE_LABEL: Record<string, string> = {
 
 /** Extract a human-readable string from any FastAPI error shape. */
 export function extractErrorMessage(err: unknown, fallback = "Произошла ошибка"): string {
-  const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
-  if (!detail) return fallback;
-  if (typeof detail === "string") return detail;
-  // Pydantic v2 validation errors: [{type, loc, msg, input}, ...]
-  if (Array.isArray(detail)) {
-    return detail
-      .map((d) => {
-        const loc = Array.isArray(d.loc) ? d.loc.filter((s: unknown) => s !== "body").join(" → ") : "";
-        return loc ? `${loc}: ${d.msg}` : d.msg;
-      })
-      .join("; ");
+  try {
+    const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+    if (!detail) return fallback;
+    if (typeof detail === "string") return detail;
+    // Pydantic v2 validation errors: [{type, loc, msg, input}, ...]
+    if (Array.isArray(detail)) {
+      const parts = (detail as Record<string, unknown>[]).map((d) => {
+        const loc = Array.isArray(d.loc)
+          ? (d.loc as unknown[]).filter((s) => s !== "body").join(" → ")
+          : "";
+        const msg = typeof d.msg === "string" ? d.msg : String(d.msg ?? "");
+        return loc ? `${loc}: ${msg}` : msg;
+      });
+      return parts.filter(Boolean).join("; ") || fallback;
+    }
+    // Single Pydantic error object {type, loc, msg, input}
+    if (typeof detail === "object" && detail !== null) {
+      const d = detail as Record<string, unknown>;
+      if (typeof d.msg === "string") return d.msg;
+    }
+    return fallback;
+  } catch {
+    return fallback;
   }
-  return fallback;
 }
 
 export const STATUS_COLOR: Record<string, string> = {
