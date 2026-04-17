@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     sentence_transformer_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
     deberta_model: str = "microsoft/deberta-v3-large"
     perplexity_model: str = "gpt2"
+    # Token-level precision model (T5.4) — requires local HuggingFace CausalLM
+    # with logit access; gpt2 is used as default for dev/testing
+    precision_model: str = "gpt2"
 
     @field_validator("log_level")
     @classmethod

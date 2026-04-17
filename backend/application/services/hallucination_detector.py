@@ -14,8 +14,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from sentence_transformers import SentenceTransformer, util
-
 from infrastructure.config import settings
 
 
@@ -31,7 +29,13 @@ class HallucinationDetector:
     """Post-generation quality gate: detects hallucinations and artifacts."""
 
     def __init__(self) -> None:
-        self._sentence_model = SentenceTransformer(settings.sentence_transformer_model)
+        self._sentence_model: Any = None  # lazy-loaded on first semantic check
+
+    def _get_sentence_model(self) -> Any:
+        if self._sentence_model is None:
+            from sentence_transformers import SentenceTransformer
+            self._sentence_model = SentenceTransformer(settings.sentence_transformer_model)
+        return self._sentence_model
 
     # ------------------------------------------------------------------
     # Public API
@@ -119,8 +123,10 @@ class HallucinationDetector:
     ) -> dict[str, Any]:
         """Cosine similarity between original and rewritten embeddings."""
         try:
-            emb_orig = self._sentence_model.encode(original, convert_to_tensor=True)
-            emb_rewr = self._sentence_model.encode(rewritten, convert_to_tensor=True)
+            from sentence_transformers import util
+            model = self._get_sentence_model()
+            emb_orig = model.encode(original, convert_to_tensor=True)
+            emb_rewr = model.encode(rewritten, convert_to_tensor=True)
             similarity = float(util.pytorch_cos_sim(emb_orig, emb_rewr).item())
             return {
                 "passed": similarity >= threshold,

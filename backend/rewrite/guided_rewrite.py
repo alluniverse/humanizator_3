@@ -16,6 +16,7 @@ from rewrite.prompts import (
     build_adversarial_prompt,
     build_diversifying_prompt,
     build_mimicking_prompt,
+    build_precision_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,9 @@ class GuidedRewriteEngine:
         contract: dict[str, Any] | None = None,
         reference_samples: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Generate a single rewrite variant (direct or chunk-level)."""
+        """Generate a single rewrite variant (direct, chunk-level, or precision)."""
+        if mode == "precision":
+            return await self._rewrite_precision(text, style_profile, contract, reference_samples)
         word_count = len(text.split())
         if word_count > CHUNK_THRESHOLD_WORDS:
             return await self._rewrite_chunked(
@@ -70,6 +73,46 @@ class GuidedRewriteEngine:
             )
             variants.append(variant)
         return variants
+
+    # ------------------------------------------------------------------
+    # Token-level Precision Guided rewrite (T5.4 / Algorithm 1)
+    # ------------------------------------------------------------------
+
+    async def _rewrite_precision(
+        self,
+        text: str,
+        style_profile: dict[str, Any] | None,
+        contract: dict[str, Any] | None,
+        reference_samples: list[str] | None,
+    ) -> dict[str, Any]:
+        """Token-level guided rewrite: select each token to minimise AI-score.
+
+        Requires HFPrecisionProvider (local HuggingFace model with logit access).
+        Falls back to standard balanced generation if provider is unavailable.
+        """
+        try:
+            from application.services.token_precision import token_precision_engine
+            prompt = build_precision_prompt(text, style_profile, contract)
+            result = await token_precision_engine.generate_async(prompt)
+            return {
+                "mode": "precision",
+                "text": result["text"],
+                "usage": {
+                    "prompt_tokens": 0,
+                    "completion_tokens": result["tokens_generated"],
+                    "total_tokens": result["tokens_generated"],
+                },
+                "chunks_count": 1,
+                "precision_metadata": {
+                    "tokens_generated": result["tokens_generated"],
+                    "algorithm": result["algorithm"],
+                    "top_k": result["top_k"],
+                    "top_p": result["top_p"],
+                },
+            }
+        except Exception as exc:
+            logger.warning("Precision mode failed (%s) — falling back to balanced", exc)
+            return await self._rewrite_direct(text, "balanced", style_profile, contract, reference_samples)
 
     # ------------------------------------------------------------------
     # Direct (single-pass) rewrite

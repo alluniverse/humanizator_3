@@ -86,6 +86,38 @@ def build_mimicking_prompt(
     return "\n\n".join(sections)
 
 
+def build_precision_prompt(
+    input_text: str,
+    style_profile: dict[str, Any] | None = None,
+    contract: dict[str, Any] | None = None,
+) -> str:
+    """Build prompt for token-level precision mode (Algorithm 1, Cheng et al. 2025).
+
+    This prompt is fed token-by-token to a local HuggingFace model.  It is
+    intentionally concise — long prompts inflate per-step latency.
+    """
+    sections: list[str] = [
+        "Rephrase the following text to sound natural and human-written. "
+        "Preserve the original meaning. Vary sentence length and vocabulary.\n\n"
+        f"Text:\n{input_text}\n\nRephrased:"
+    ]
+    if contract:
+        protected = [e["text"] for e in contract.get("protected_entities", [])]
+        key_terms = contract.get("key_terms", [])
+        preserve = protected + key_terms
+        if preserve:
+            sections[0] = sections[0].replace(
+                "Preserve the original meaning.",
+                f"Preserve the original meaning. Keep: {preserve}.",
+            )
+    if style_profile:
+        guidance = style_profile.get("guidance_signals", {})
+        formality = guidance.get("target_formality", "")
+        if formality:
+            sections[0] += f" Formality: {formality}."
+    return sections[0]
+
+
 def build_adversarial_prompt(
     input_text: str,
     style_profile: dict[str, Any] | None = None,

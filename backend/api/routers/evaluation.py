@@ -13,6 +13,7 @@ from application.services.evaluation_engine import evaluation_engine
 from application.services.grammar_layer import grammar_layer
 from application.services.adversarial_robustness import adversarial_robustness_evaluator
 from application.services.hallucination_detector import hallucination_detector
+from application.services.token_precision import token_precision_engine
 from application.services.holistic_ranker import holistic_ranker
 from application.services.structural_polishing import structural_polishing
 from application.services.style_guidance import style_guidance_engine
@@ -267,4 +268,49 @@ async def check_adversarial_robustness(
         attacks=attacks,
         semantic_threshold=semantic_threshold,
     )
+    return {"task_id": str(task_id), **result}
+
+
+@router.post("/{task_id}/precision-rewrite")
+async def precision_rewrite(
+    task_id: uuid.UUID,
+    context: str = "",
+    max_new_tokens: int = 200,
+    top_k: int = 50,
+    top_p: float = 0.99,
+    session: AsyncSession = Depends(get_async_session),
+) -> dict[str, Any]:
+    """Token-level Precision Guided rewrite (Algorithm 1, Cheng et al. 2025).
+
+    Generates text token-by-token, selecting at each step the candidate
+    that minimises the AI-likeness score.  Requires a local HuggingFace
+    model configured via `precision_model` in settings.
+
+    Returns the rewritten text plus per-token metadata (for analysis/debugging).
+    Falls back to balanced generation if the local model is unavailable.
+    """
+    task = await session.get(RewriteTask, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    from rewrite.prompts import build_precision_prompt
+    from application.services.semantic_contract import semantic_contract_builder
+    from infrastructure.db.models import StyleLibrary
+
+    library = await session.get(StyleLibrary, task.library_id)
+
+    contract = semantic_contract_builder.build_contract(
+        task.original_text,
+        mode=task.semantic_contract_mode.value,
+        language=library.language if library else "ru",
+    )
+
+    prompt = build_precision_prompt(task.original_text, contract=contract)
+
+    # Configure engine for this request
+    token_precision_engine.top_k = top_k
+    token_precision_engine.top_p = top_p
+    token_precision_engine.max_new_tokens = max_new_tokens
+
+    result = await token_precision_engine.generate_async(prompt, context=context)
     return {"task_id": str(task_id), **result}
