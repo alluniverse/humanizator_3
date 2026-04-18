@@ -5,27 +5,124 @@ from __future__ import annotations
 from typing import Any
 
 
-DIVERSIFYING_PROMPT = """Revise the text to enrich its language diversity, employing varied sentence structures, synonyms, and stylistic nuances, while preserving the original meaning:
+# ---------------------------------------------------------------------------
+# System prompts — define the transformation goal for each mode
+# ---------------------------------------------------------------------------
 
-{input_text}
-"""
-
-# Adversarial system prompt — from docs/2506.07001v1, Figure 2
-ADVERSARIAL_SYSTEM_PROMPT = (
-    "You are a rephraser. Given any input text, you are supposed to rephrase the text "
-    "without changing its meaning and content, while maintaining the text quality. "
-    "Also, it is important for you to rephrase a text that has a different style from "
-    "the input text. You can not just make a few changes to the input text. "
-    "Print your rephrased output text between tags <TAG> and </TAG>."
+SYSTEM_CONSERVATIVE = (
+    "You are an expert editor. Your task is to paraphrase the given text. "
+    "Change sentence structure, reorder clauses, and substitute vocabulary with synonyms. "
+    "The rewritten text must preserve ALL factual content, named entities, dates, and numbers exactly. "
+    "Make the output clearly distinct from the input at the phrase level, but do not alter the meaning. "
+    "Return ONLY the rewritten text — no explanations, no tags, no preamble."
 )
 
-MIMICKING_PROMPT = """Rewrite the text using the same language style, tone, and expression as the reference text. Focus on capturing the unique vocabulary, sentence structure, and stylistic elements evident in the reference:
+SYSTEM_BALANCED = (
+    "You are a professional rewriter. Substantially rewrite the given text. "
+    "Restructure sentences, vary sentence length (mix short and long), change the order of ideas within paragraphs, "
+    "and use different vocabulary where possible. "
+    "Preserve all key facts, entities, and arguments — but the surface form should read as a distinctly different text. "
+    "Return ONLY the rewritten text — no explanations, no tags, no preamble."
+)
 
-{input_text}
+SYSTEM_EXPRESSIVE = (
+    "You are a skilled author rewriting a text in a vivid, engaging style. "
+    "Transform the text significantly: vary rhythm, use expressive vocabulary, restructure paragraphs. "
+    "The result should feel stylistically fresh and natural while retaining all factual content. "
+    "Return ONLY the rewritten text — no explanations, no tags, no preamble."
+)
 
-# Reference Text:
-{reference_sample}
-"""
+SYSTEM_MIMICKING = (
+    "You are a style adaptor. Rewrite the given text so that it matches the tone, rhythm, "
+    "sentence structure, and vocabulary style of the provided reference text. "
+    "Preserve all factual content from the original text. "
+    "Return ONLY the rewritten text — no explanations, no tags, no preamble."
+)
+
+
+def _contract_note(contract: dict[str, Any] | None) -> str:
+    if not contract:
+        return ""
+    protected = [e["text"] for e in contract.get("protected_entities", [])]
+    numbers = [e["text"] for e in contract.get("protected_numbers", [])]
+    key_terms = contract.get("key_terms", [])[:10]
+    parts: list[str] = []
+    if protected:
+        parts.append(f"Keep these entities unchanged: {', '.join(protected[:15])}.")
+    if numbers:
+        parts.append(f"Keep these numbers/dates unchanged: {', '.join(numbers[:10])}.")
+    if key_terms:
+        parts.append(f"Key terms to preserve: {', '.join(key_terms)}.")
+    return "\n".join(parts)
+
+
+def _style_note(style_profile: dict[str, Any] | None) -> str:
+    if not style_profile:
+        return ""
+    g = style_profile.get("guidance_signals", {})
+    parts: list[str] = []
+    if g.get("target_sentence_length"):
+        parts.append(f"Target sentence length: {g['target_sentence_length']}.")
+    if g.get("target_burstiness"):
+        parts.append(f"Sentence length variety: {g['target_burstiness']}.")
+    if g.get("target_formality"):
+        parts.append(f"Formality level: {g['target_formality']}.")
+    return " ".join(parts)
+
+
+def build_user_prompt(
+    input_text: str,
+    style_profile: dict[str, Any] | None = None,
+    contract: dict[str, Any] | None = None,
+    reference_sample: str | None = None,
+    is_chunk: bool = False,
+    chunk_idx: int = 0,
+    total_chunks: int = 1,
+    prev_context: str | None = None,
+) -> str:
+    """Build the user-turn content: context + constraints + text."""
+    lines: list[str] = []
+
+    if is_chunk and total_chunks > 1:
+        lines.append(f"[Part {chunk_idx + 1} of {total_chunks}]")
+    if prev_context:
+        lines.append(f"[Preceding context: {prev_context}]")
+
+    contract_note = _contract_note(contract)
+    if contract_note:
+        lines.append(contract_note)
+
+    style_note = _style_note(style_profile)
+    if style_note:
+        lines.append(style_note)
+
+    if reference_sample:
+        lines.append(f"Reference style:\n{reference_sample[:600]}")
+
+    lines.append(f"Text to rewrite:\n{input_text}")
+    return "\n\n".join(lines)
+
+
+def get_system_prompt(
+    mode: str,
+    reference_sample: str | None = None,
+) -> str:
+    if reference_sample:
+        return SYSTEM_MIMICKING
+    return {
+        "conservative": SYSTEM_CONSERVATIVE,
+        "balanced": SYSTEM_BALANCED,
+        "expressive": SYSTEM_EXPRESSIVE,
+    }.get(mode, SYSTEM_BALANCED)
+
+
+# Keep legacy functions for any external callers
+def build_adversarial_prompt(
+    input_text: str,
+    style_profile: dict[str, Any] | None = None,
+    contract: dict[str, Any] | None = None,
+) -> str:
+    return build_user_prompt(input_text, style_profile, contract)
 
 
 def build_diversifying_prompt(
@@ -34,24 +131,7 @@ def build_diversifying_prompt(
     contract: dict[str, Any] | None = None,
     mode: str = "balanced",
 ) -> str:
-    """Build a Diversifying prompt with style and contract guidance."""
-    sections: list[str] = [DIVERSIFYING_PROMPT.format(input_text=input_text)]
-    if style_profile:
-        guidance = style_profile.get("guidance_signals", {})
-        sections.append(
-            f"# Style Guidance\n"
-            f"Target sentence length: {guidance.get('target_sentence_length', 'varied')}. "
-            f"Target burstiness: {guidance.get('target_burstiness', 'moderate')}. "
-            f"Target formality: {guidance.get('target_formality', 'balanced')}."
-        )
-    if contract:
-        sections.append(
-            f"# Semantic Protection ({contract.get('mode', 'balanced')})\n"
-            f"Protected entities: {[e['text'] for e in contract.get('protected_entities', [])]}. "
-            f"Key terms: {contract.get('key_terms', [])}."
-        )
-    sections.append(f"# Mode\n{mode.capitalize()}")
-    return "\n\n".join(sections)
+    return build_user_prompt(input_text, style_profile, contract)
 
 
 def build_mimicking_prompt(
@@ -61,29 +141,7 @@ def build_mimicking_prompt(
     contract: dict[str, Any] | None = None,
     mode: str = "balanced",
 ) -> str:
-    """Build a Mimicking (reference-driven) prompt."""
-    sections: list[str] = [
-        MIMICKING_PROMPT.format(
-            input_text=input_text,
-            reference_sample=reference_sample,
-        )
-    ]
-    if style_profile:
-        guidance = style_profile.get("guidance_signals", {})
-        sections.append(
-            f"# Style Guidance\n"
-            f"Target sentence length: {guidance.get('target_sentence_length', 'varied')}. "
-            f"Target burstiness: {guidance.get('target_burstiness', 'moderate')}. "
-            f"Target formality: {guidance.get('target_formality', 'balanced')}."
-        )
-    if contract:
-        sections.append(
-            f"# Semantic Protection ({contract.get('mode', 'balanced')})\n"
-            f"Protected entities: {[e['text'] for e in contract.get('protected_entities', [])]}. "
-            f"Key terms: {contract.get('key_terms', [])}."
-        )
-    sections.append(f"# Mode\n{mode.capitalize()}")
-    return "\n\n".join(sections)
+    return build_user_prompt(input_text, style_profile, contract, reference_sample)
 
 
 def build_precision_prompt(
@@ -91,56 +149,8 @@ def build_precision_prompt(
     style_profile: dict[str, Any] | None = None,
     contract: dict[str, Any] | None = None,
 ) -> str:
-    """Build prompt for token-level precision mode (Algorithm 1, Cheng et al. 2025).
-
-    This prompt is fed token-by-token to a local HuggingFace model.  It is
-    intentionally concise — long prompts inflate per-step latency.
-    """
-    sections: list[str] = [
+    return (
         "Rephrase the following text to sound natural and human-written. "
         "Preserve the original meaning. Vary sentence length and vocabulary.\n\n"
         f"Text:\n{input_text}\n\nRephrased:"
-    ]
-    if contract:
-        protected = [e["text"] for e in contract.get("protected_entities", [])]
-        key_terms = contract.get("key_terms", [])
-        preserve = protected + key_terms
-        if preserve:
-            sections[0] = sections[0].replace(
-                "Preserve the original meaning.",
-                f"Preserve the original meaning. Keep: {preserve}.",
-            )
-    if style_profile:
-        guidance = style_profile.get("guidance_signals", {})
-        formality = guidance.get("target_formality", "")
-        if formality:
-            sections[0] += f" Formality: {formality}."
-    return sections[0]
-
-
-def build_adversarial_prompt(
-    input_text: str,
-    style_profile: dict[str, Any] | None = None,
-    contract: dict[str, Any] | None = None,
-) -> str:
-    """Build adversarial paraphrasing prompt (docs/2506.07001v1, Figure 2)."""
-    sections: list[str] = [
-        ADVERSARIAL_SYSTEM_PROMPT,
-        f"Input text:\n{input_text}",
-    ]
-    if contract:
-        protected = [e["text"] for e in contract.get("protected_entities", [])]
-        key_terms = contract.get("key_terms", [])
-        if protected or key_terms:
-            sections.append(
-                f"# Semantic Protection\nDo NOT change: {protected + key_terms}."
-            )
-    if style_profile:
-        guidance = style_profile.get("guidance_signals", {})
-        if guidance:
-            sections.append(
-                f"# Style Guidance\n"
-                f"Target burstiness: {guidance.get('target_burstiness', 'moderate')}. "
-                f"Target formality: {guidance.get('target_formality', 'balanced')}."
-            )
-    return "\n\n".join(sections)
+    )

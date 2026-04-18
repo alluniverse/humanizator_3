@@ -13,6 +13,7 @@ class LLMProvider(ABC):
     async def generate(
         self,
         prompt: str,
+        system_prompt: str | None = None,
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 1024,
@@ -25,6 +26,7 @@ class LLMProvider(ABC):
         self,
         prompt: str,
         n: int = 3,
+        system_prompt: str | None = None,
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 1024,

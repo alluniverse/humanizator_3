@@ -36,6 +36,7 @@ class OpenAIProvider(LLMProvider):
     async def generate(
         self,
         prompt: str,
+        system_prompt: str | None = None,
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 1024,
@@ -43,9 +44,13 @@ class OpenAIProvider(LLMProvider):
     ) -> dict[str, Any]:
         if not self._has_api_key and self._base_url is None:
             raise RuntimeError("OPENAI_API_KEY is not configured")
+        messages: list[dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
         response = await self._client.chat.completions.create(
             model=model or self._default_model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
             **kwargs,
@@ -81,6 +86,7 @@ class OpenAIProvider(LLMProvider):
         self,
         prompt: str,
         n: int = 3,
+        system_prompt: str | None = None,
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 1024,
@@ -88,9 +94,13 @@ class OpenAIProvider(LLMProvider):
     ) -> list[dict[str, Any]]:
         if not self._has_api_key and self._base_url is None:
             raise RuntimeError("OPENAI_API_KEY is not configured")
+        messages: list[dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
         response = await self._client.chat.completions.create(
             model=model or self._default_model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
             n=n,

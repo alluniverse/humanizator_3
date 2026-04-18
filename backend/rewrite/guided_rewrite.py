@@ -13,10 +13,9 @@ from typing import Any
 
 from adapters.llm import LLMProvider, OpenAIProvider
 from rewrite.prompts import (
-    build_adversarial_prompt,
-    build_diversifying_prompt,
-    build_mimicking_prompt,
     build_precision_prompt,
+    build_user_prompt,
+    get_system_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -126,9 +125,12 @@ class GuidedRewriteEngine:
         contract: dict[str, Any] | None,
         reference_samples: list[str] | None,
     ) -> dict[str, Any]:
-        prompt = self._build_prompt(text, mode, style_profile, contract, reference_samples)
+        ref = reference_samples[0] if reference_samples and mode == "expressive" else None
+        system = get_system_prompt(mode, ref)
+        user = build_user_prompt(text, style_profile, contract, ref)
         response = await self._provider.generate(
-            prompt,
+            user,
+            system_prompt=system,
             temperature=self._temperature_for_mode(mode),
         )
         return {
@@ -160,21 +162,22 @@ class GuidedRewriteEngine:
         total_usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         prev_context: str | None = None
 
+        ref = reference_samples[0] if reference_samples and mode == "expressive" else None
+        system = get_system_prompt(mode, ref)
         for i, chunk in enumerate(chunks):
-            chunk_text = self._add_context_prefix(chunk, prev_context, i)
-            prompt = self._build_prompt(
-                chunk_text, mode, style_profile, contract,
-                reference_samples, is_chunk=True, chunk_idx=i, total_chunks=len(chunks)
+            user = build_user_prompt(
+                chunk, style_profile, contract, ref,
+                is_chunk=True, chunk_idx=i, total_chunks=len(chunks),
+                prev_context=prev_context,
             )
             try:
                 response = await self._provider.generate(
-                    prompt,
+                    user,
+                    system_prompt=system,
                     temperature=self._temperature_for_mode(mode),
-                    max_tokens=512,
+                    max_tokens=600,
                 )
-                rewritten = response["text"]
-                # Strip context prefix echo if model repeated it
-                rewritten = self._strip_context_echo(rewritten, prev_context)
+                rewritten = response["text"].strip()
                 rewritten_chunks.append(rewritten)
                 # Update usage
                 for k in total_usage:
@@ -245,24 +248,6 @@ class GuidedRewriteEngine:
             chunks.append(" ".join(current))
         return chunks or [para]
 
-    def _add_context_prefix(self, chunk: str, prev_context: str | None, idx: int) -> str:
-        """Prepend cross-chunk context to maintain narrative continuity."""
-        if prev_context and idx > 0:
-            return f"[Previous context: {prev_context}]\n\n{chunk}"
-        return chunk
-
-    def _strip_context_echo(self, text: str, prev_context: str | None) -> str:
-        """Remove echoed context prefix if the model repeated it."""
-        if not prev_context:
-            return text
-        prefix_marker = "[Previous context:"
-        if text.startswith(prefix_marker):
-            # Strip up to the end of the context block
-            end = text.find("]")
-            if end != -1:
-                text = text[end + 1:].lstrip("\n ")
-        return text
-
     def _first_sentence(self, text: str) -> str:
         """Extract first sentence for cross-chunk context."""
         match = re.search(r"[^.!?]+[.!?]", text)
@@ -272,36 +257,8 @@ class GuidedRewriteEngine:
         """Join chunks with paragraph separators."""
         return "\n\n".join(c.strip() for c in chunks if c.strip())
 
-    # ------------------------------------------------------------------
-    # Prompt building
-    # ------------------------------------------------------------------
-
-    def _build_prompt(
-        self,
-        text: str,
-        mode: str,
-        style_profile: dict[str, Any] | None,
-        contract: dict[str, Any] | None,
-        reference_samples: list[str] | None,
-        is_chunk: bool = False,
-        chunk_idx: int = 0,
-        total_chunks: int = 1,
-    ) -> str:
-        chunk_note = (
-            f"\n\n[Note: This is chunk {chunk_idx + 1} of {total_chunks}. "
-            "Maintain consistent style with surrounding chunks.]"
-            if is_chunk and total_chunks > 1
-            else ""
-        )
-        if mode == "expressive" and reference_samples:
-            ref = reference_samples[0]
-            return build_mimicking_prompt(text + chunk_note, ref, style_profile, contract, mode)
-        if mode == "conservative":
-            return build_adversarial_prompt(text + chunk_note, style_profile, contract)
-        return build_diversifying_prompt(text + chunk_note, style_profile, contract, mode)
-
     def _temperature_for_mode(self, mode: str) -> float:
-        return {"conservative": 0.3, "balanced": 0.6, "expressive": 0.9}.get(mode, 0.6)
+        return {"conservative": 0.55, "balanced": 0.75, "expressive": 0.95}.get(mode, 0.75)
 
 
 guided_rewrite_engine = GuidedRewriteEngine()
