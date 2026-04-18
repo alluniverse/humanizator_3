@@ -19,13 +19,17 @@ class OpenAIProvider(LLMProvider):
     """OpenAI-compatible LLM provider."""
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None) -> None:
+        import os
         resolved_api_key = api_key or settings.openai_api_key
         self._has_api_key = bool(resolved_api_key)
-        self._base_url = base_url or settings.openai_base_url
-        self._client = AsyncOpenAI(
-            api_key=resolved_api_key or "missing-api-key",
-            base_url=self._base_url,
-        )
+        self._base_url = base_url or settings.openai_base_url or None
+        # Clear env var so SDK doesn't pick up an empty OPENAI_BASE_URL string
+        if not self._base_url:
+            os.environ.pop("OPENAI_BASE_URL", None)
+        client_kwargs: dict = {"api_key": resolved_api_key or "missing-api-key"}
+        if self._base_url:
+            client_kwargs["base_url"] = self._base_url
+        self._client = AsyncOpenAI(**client_kwargs)
         self._default_model = settings.openai_model
 
     @retry(
