@@ -401,20 +401,79 @@ async def _do_translate(context: dict[str, Any]) -> dict[str, Any]:
 
 async def _do_adapt(context: dict[str, Any]) -> dict[str, Any]:
     from adapters.llm import OpenAIProvider
-    from rewrite.prompts import get_adaptation_system_prompt
+    from infrastructure.db.models import RewriteTask, StyleSample
+    from infrastructure.db.session import AsyncSessionLocal
+    from rewrite.prompts import (
+        build_adaptation_user_prompt,
+        get_adaptation_system_prompt,
+        get_refinement_system_prompt,
+    )
 
     translation_target = context["translation_target"]
     translated_text = context["translation_result"]
+    style_profile = context.get("style_profile")
+    task_id = context["task_id"]
+
+    # Load L1 library samples so the LLM can match human style
+    reference_sample: str | None = None
+    async with AsyncSessionLocal() as session:
+        task = await session.get(RewriteTask, task_id)
+        if task:
+            sample_result = await session.execute(
+                select(StyleSample)
+                .where(StyleSample.library_id == task.library_id)
+                .where(StyleSample.quality_tier == QualityTier.L1)
+                .limit(1)
+            )
+            sample = sample_result.scalar_one_or_none()
+            if not sample:
+                fallback = await session.execute(
+                    select(StyleSample)
+                    .where(StyleSample.library_id == task.library_id)
+                    .limit(1)
+                )
+                sample = fallback.scalar_one_or_none()
+            if sample:
+                reference_sample = sample.content
+
     provider = OpenAIProvider()
-    system = get_adaptation_system_prompt(translation_target)
+    system = get_adaptation_system_prompt(translation_target, style_profile, reference_sample)
+    user = build_adaptation_user_prompt(translated_text, style_profile, reference_sample)
+
+    _uk_markers = [
+        "варто зазначити", "необхідно відзначити", "слід зазначити",
+        "важливо розуміти", "таким чином", "у висновку", "підбиваючи підсумок",
+        "загалом", "безперечно", "безсумнівно", "очевидно", "справді",
+        "безумовно", "крім того", "більш того",
+        # also catch Russian/English markers that may survive translation
+        "стоит отметить", "таким образом", "furthermore", "moreover", "in conclusion",
+    ]
+
+    def _has_markers(text: str) -> bool:
+        lower = text.lower()
+        return any(m in lower for m in _uk_markers)
+
     try:
         response = await provider.generate(
-            f"Text to revise:\n{translated_text}",
+            user,
             system_prompt=system,
-            temperature=0.7,
+            temperature=0.90,
             max_tokens=2048,
         )
-        return {**context, "translation_adapted_text": response["text"]}
+        adapted = response["text"]
+
+        # Refinement pass if AI markers still present
+        if _has_markers(adapted):
+            ref2 = await provider.generate(
+                f"Text to refine:\n{adapted}",
+                system_prompt=get_refinement_system_prompt(),
+                temperature=0.90,
+                max_tokens=2048,
+            )
+            if ref2.get("text", "").strip():
+                adapted = ref2["text"]
+
+        return {**context, "translation_adapted_text": adapted}
     except Exception as exc:
         logger.warning("[adapt] LLM call failed: %s — using raw translation", exc)
         return {**context, "translation_adapted_text": translated_text}

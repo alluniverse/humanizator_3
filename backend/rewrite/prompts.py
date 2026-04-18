@@ -207,6 +207,35 @@ _TRANSLATION_LANG_NAMES: dict[str, str] = {
     "fr": "French",
 }
 
+# ---------------------------------------------------------------------------
+# Ukrainian AI marker patterns (injected into adaptation prompts for uk target)
+# ---------------------------------------------------------------------------
+
+_AI_MARKER_BLOCK_UK = (
+    "ПРІОРИТЕТ 1 — ВИДАЛИ ВСІ AI-МАРКЕРИ. Перш ніж щось робити, перевір текст на всі типові "
+    "патерни AI-генерованого тексту і прибери їх. Це обов'язково.\n\n"
+
+    "УКРАЇНСЬКІ AI-патерни для видалення:\n"
+    "• Хеджинг: 'Варто зазначити', 'Необхідно відзначити', 'Слід зазначити', "
+    "'Важливо розуміти', 'Не можна не відзначити', 'Не менш важливо', 'Насамперед варто'\n"
+    "• Філери-переходи: 'Таким чином', 'У висновку', 'Підбиваючи підсумок', 'Загалом', "
+    "'Як було зазначено вище', 'Виходячи з вищесказаного', 'У цьому контексті', "
+    "'Крім того', 'Більш того', 'Окрім того'\n"
+    "• Порожні підсилювачі: 'Безперечно', 'Безсумнівно', 'Очевидно', 'Справді', "
+    "'Безумовно', 'Цілком очевидно', 'Не викликає сомнівів'\n"
+    "• Структурні ознаки AI: нумеровані списки очевидних пунктів, симетричні абзаци "
+    "однакової довжини, завершення підсумковим абзацем\n\n"
+
+    "ЗРОБИ ТЕКСТ ЛЮДСЬКИМ (українською):\n"
+    "• Чергуй дуже короткі речення (3-5 слів) із довшими (15-25 слів) непередбачувано\n"
+    "• Дозволь легку розмовність — скорочення, розмовний зворот, тире замість крапки з комою\n"
+    "• НЕ починай кожне речення з іменникової групи — варіюй: дієслово, прислівник, підрядне\n"
+    "• Уникай маркованих і нумерованих списків, якщо їх не було в оригіналі\n"
+    "• Не закінчуй підсумковим абзацем, що пересказує щойно сказане\n"
+    "• Легка надмірність або відступ від теми — прийнятні, людина так пише\n"
+    "Заміни всі AI-патерни прямою, природною, різноманітною, злегка недосконалою людською мовою."
+)
+
 
 def get_translation_system_prompt(target_lang: str) -> str:
     lang_name = _TRANSLATION_LANG_NAMES.get(target_lang, target_lang)
@@ -217,16 +246,55 @@ def get_translation_system_prompt(target_lang: str) -> str:
     )
 
 
-def get_adaptation_system_prompt(target_lang: str) -> str:
+def get_adaptation_system_prompt(
+    target_lang: str,
+    style_profile: dict[str, Any] | None = None,
+    reference_sample: str | None = None,
+) -> str:
     lang_name = _TRANSLATION_LANG_NAMES.get(target_lang, target_lang)
-    return (
-        f"{_AI_MARKER_BLOCK}\n\n"
+    marker_block = _AI_MARKER_BLOCK_UK if target_lang == "uk" else _AI_MARKER_BLOCK
+
+    base = (
+        f"{marker_block}\n\n"
         f"You are a professional editor working in {lang_name}. "
         f"Revise the given text to sound completely natural and human-written in {lang_name}. "
-        "Apply all the AI marker elimination rules above. "
-        "Make the text flow naturally as if written by a native speaker. "
+        "Apply ALL the AI marker elimination rules above aggressively. "
+    )
+
+    if reference_sample:
+        base += (
+            "You have been given a reference sample written by a real human author. "
+            f"Match the rhythm, sentence structure, vocabulary level, and tone of that reference. "
+        )
+    elif style_profile:
+        base += (
+            "You have been given style guidance signals extracted from human-written reference texts. "
+            "Follow those style instructions precisely. "
+        )
+
+    base += (
+        f"The result must read as if written by a native {lang_name} speaker — not translated, not AI-generated. "
         "Return ONLY the revised text — no explanations, no tags, no preamble."
     )
+    return base
+
+
+def build_adaptation_user_prompt(
+    text: str,
+    style_profile: dict[str, Any] | None = None,
+    reference_sample: str | None = None,
+) -> str:
+    lines: list[str] = []
+
+    style_note = _style_note(style_profile)
+    if style_note:
+        lines.append(style_note)
+
+    if reference_sample:
+        lines.append(f"Reference sample (human-written — match this style):\n{reference_sample[:800]}")
+
+    lines.append(f"Text to revise:\n{text}")
+    return "\n\n".join(lines)
 
 
 SYSTEM_REFINEMENT = (
