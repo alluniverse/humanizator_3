@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     enable_prometheus: bool = True
 
+    # HuggingFace access token — required for gated models (LLaMA-3, etc.)
+    # Get yours at https://huggingface.co/settings/tokens
+    hf_token: str | None = None
+
     # NLP / ML models
     sentence_transformer_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
     deberta_model: str = "microsoft/deberta-v3-large"

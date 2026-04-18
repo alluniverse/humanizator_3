@@ -113,9 +113,11 @@ class RobertaAIDetector:
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
         self._torch = torch
         self._device = "cuda" if torch.cuda.is_available() else "cpu"
-        self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        from infrastructure.config import settings
+        _hf_token = getattr(settings, "hf_token", None)
+        self._tokenizer = AutoTokenizer.from_pretrained(self.model_name, token=_hf_token)
         self._model = AutoModelForSequenceClassification.from_pretrained(
-            self.model_name
+            self.model_name, token=_hf_token
         ).to(self._device).eval()
 
     def score(self, text: str) -> float:

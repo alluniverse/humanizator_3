@@ -59,9 +59,14 @@ class HFPrecisionProvider(LLMProvider):
             device = "cuda" if _torch.cuda.is_available() else "cpu"
         self.device = device
 
-        self._tokenizer = AutoTokenizer.from_pretrained(model_name)
+        from infrastructure.config import settings
+        _hf_token = getattr(settings, "hf_token", None)
+
+        self._tokenizer = AutoTokenizer.from_pretrained(model_name, token=_hf_token)
         self._model = AutoModelForCausalLM.from_pretrained(
-            model_name, torch_dtype=_torch.float16 if "cuda" in device else _torch.float32
+            model_name,
+            torch_dtype=_torch.float16 if "cuda" in device else _torch.float32,
+            token=_hf_token,
         ).to(device).eval()
 
         if self._tokenizer.pad_token is None:
