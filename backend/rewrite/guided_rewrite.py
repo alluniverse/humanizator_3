@@ -13,6 +13,7 @@ from typing import Any
 
 from adapters.llm import LLMProvider, OpenAIProvider
 from rewrite.prompts import (
+    PRECISION_SYSTEM_PROMPT,
     build_precision_prompt,
     build_user_prompt,
     get_system_prompt,
@@ -94,12 +95,14 @@ class GuidedRewriteEngine:
         """
         try:
             from application.services.token_precision import token_precision_engine
-            # build_precision_prompt returns the full input: system instruction
-            # from Figure 2 + the source text.  The engine feeds this as the
-            # complete prompt to the paraphraser LLM and scores generated tokens
-            # using only y_m (the output so far).
-            prompt = build_precision_prompt(text, style_profile, contract)
-            result = await token_precision_engine.generate_async(prompt)
+            # build_precision_prompt now returns the user text only.
+            # PRECISION_SYSTEM_PROMPT (Figure 2 exact text) is passed as system_prompt
+            # so the engine can place it in the chat template slot for LLaMA-3-8B-Instruct,
+            # or prepend it as raw text for models without a chat template.
+            user_text = build_precision_prompt(text, style_profile, contract)
+            result = await token_precision_engine.generate_async(
+                user_text, system_prompt=PRECISION_SYSTEM_PROMPT
+            )
             if not result.get("text", "").strip():
                 raise ValueError("Precision engine returned empty text")
             return {

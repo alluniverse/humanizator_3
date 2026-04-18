@@ -199,7 +199,16 @@ def _build_default_ai_scorer() -> "RobertaAIDetector | SimpleAIScorer":
         return SimpleAIScorer()
 
 
-_default_ai_scorer: "RobertaAIDetector | SimpleAIScorer" = SimpleAIScorer()
+# Lazily initialised — avoids importing torch/transformers at module load time.
+# _build_default_ai_scorer() is called on first TokenPrecisionEngine.generate() call.
+_default_ai_scorer: "RobertaAIDetector | SimpleAIScorer | None" = None
+
+
+def _get_default_ai_scorer() -> "RobertaAIDetector | SimpleAIScorer":
+    global _default_ai_scorer
+    if _default_ai_scorer is None:
+        _default_ai_scorer = _build_default_ai_scorer()
+    return _default_ai_scorer
 
 
 class TokenPrecisionEngine:
@@ -223,7 +232,8 @@ class TokenPrecisionEngine:
         max_candidates_to_score: int = DEFAULT_TOP_K,
     ) -> None:
         self._provider = provider  # lazy: set at first call if None
-        self._ai_scorer = ai_scorer or _default_ai_scorer
+        # None → resolved lazily on first generate() call via _get_default_ai_scorer()
+        self._ai_scorer: "RobertaAIDetector | SimpleAIScorer | None" = ai_scorer
         self.top_k = top_k
         self.top_p = top_p
         self.max_new_tokens = max_new_tokens
@@ -244,13 +254,18 @@ class TokenPrecisionEngine:
         self,
         prompt: str,
         context: str = "",
+        system_prompt: str | None = None,
     ) -> dict[str, Any]:
         """Run Algorithm 1: token-level adversarial paraphrasing.
 
         Args:
-            prompt: Humanisation prompt (Figure 2 system prompt + source text).
+            prompt: Source text to paraphrase (user turn).
                     Build with rewrite.prompts.build_precision_prompt().
-            context: Optional cross-chunk context prefix (used for chunked texts).
+            context: Optional cross-chunk context prefix.
+            system_prompt: Figure 2 system instruction.  When the paraphraser
+                supports a chat template (LLaMA-3-8B-Instruct), this is placed
+                in the <|system|> slot via encode_chat(); otherwise it is
+                prepended as raw text.  Defaults to PRECISION_SYSTEM_PROMPT.
 
         Returns dict with keys:
             text              — generated text (without prompt; <TAG> stripped)
@@ -261,10 +276,19 @@ class TokenPrecisionEngine:
         """
         import torch
         import torch.nn.functional as F
+        from rewrite.prompts import PRECISION_SYSTEM_PROMPT
 
+        ai_scorer = self._ai_scorer or _get_default_ai_scorer()
         provider = self._get_provider()
-        full_prompt = (context + "\n\n" + prompt).strip() if context else prompt
-        input_ids = provider.encode(full_prompt)  # [1, seq_len]
+
+        sys = system_prompt or PRECISION_SYSTEM_PROMPT
+        user_text = (context + "\n\n" + prompt).strip() if context else prompt
+
+        # Line 3 setup: encode full context sys ⊕ x_{:n} using chat template when available
+        if hasattr(provider, "encode_chat"):
+            input_ids = provider.encode_chat(sys, user_text)
+        else:
+            input_ids = provider.encode(f"{sys}\n\n{user_text}")
 
         generated_ids: list[int] = []
         steps: list[dict[str, Any]] = []
@@ -305,7 +329,7 @@ class TokenPrecisionEngine:
                 candidate_token_text = provider.decode_tokens([cid])
                 # Score: partial output so far + this candidate token
                 scored_text = current_output + candidate_token_text
-                ai_score = self._ai_scorer.score(scored_text)
+                ai_score = ai_scorer.score(scored_text)
                 if ai_score < best_score:
                     best_score = ai_score
                     best_id = cid  # Line 10: argmin scores
@@ -338,11 +362,18 @@ class TokenPrecisionEngine:
             "top_p": self.top_p,
         }
 
-    async def generate_async(self, prompt: str, context: str = "") -> dict[str, Any]:
+    async def generate_async(
+        self,
+        prompt: str,
+        context: str = "",
+        system_prompt: str | None = None,
+    ) -> dict[str, Any]:
         """Async wrapper — runs token-level generation in a thread executor."""
         import asyncio
+        import functools
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.generate, prompt, context)
+        fn = functools.partial(self.generate, prompt, context, system_prompt)
+        return await loop.run_in_executor(None, fn)
 
 
 token_precision_engine = TokenPrecisionEngine()

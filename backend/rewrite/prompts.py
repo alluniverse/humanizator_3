@@ -351,22 +351,30 @@ def build_mimicking_prompt(
     return build_user_prompt(input_text, style_profile, contract, reference_sample)
 
 
+# Exact Figure 2 system prompt from Cheng et al. 2025 (arXiv:2506.07001v1).
+# Used as the `sys` instruction for the paraphraser LLM in Algorithm 1.
+# The model must output rephrased text wrapped in <TAG>...</TAG>.
+PRECISION_SYSTEM_PROMPT = (
+    "You are a rephraser. Given any input text, you are supposed to rephrase the text "
+    "without changing its meaning and content, while maintaining the text quality. "
+    "Also, it is important for you to output a rephrased text that has a different style "
+    "from the input text. The input is not just to make a few changes to the input text. "
+    "The input text is given below. "
+    "Print your rephrased output text between tags <TAG> and </TAG>."
+)
+
+
 def build_precision_prompt(
     input_text: str,
     style_profile: dict[str, Any] | None = None,
     contract: dict[str, Any] | None = None,
 ) -> str:
-    """System prompt from Figure 2 of Cheng et al. 2025 (arXiv:2506.07001v1).
+    """Return the user-turn text for Algorithm 1 (the source text to paraphrase).
 
-    The paraphraser LLM is instructed to wrap output in <TAG>...</TAG> so
-    the engine can cleanly extract the rewritten text from the full response.
+    The system prompt is PRECISION_SYSTEM_PROMPT — kept separate so that
+    TokenPrecisionEngine can apply it via the model's chat template when
+    the paraphraser is an instruction-tuned model (e.g. LLaMA-3-8B-Instruct).
+    For raw causal LMs without a chat template, the engine concatenates
+    PRECISION_SYSTEM_PROMPT + this text automatically.
     """
-    return (
-        "You are a rephraser. Given any input text, you are supposed to rephrase the text "
-        "without changing its meaning and content, while maintaining the text quality. "
-        "Also, it is important for you to output a rephrased text that has a different style "
-        "from the input text. The input is not just to make a few changes to the input text. "
-        "The input text is given below. "
-        "Print your rephrased output text between tags <TAG> and </TAG>.\n\n"
-        f"{input_text}"
-    )
+    return input_text

@@ -151,6 +151,36 @@ class HFPrecisionProvider(LLMProvider):
         return self._tokenizer(text, return_tensors="pt").input_ids.to(self.device)
 
     @property
+    def has_chat_template(self) -> bool:
+        """True if the tokenizer has a chat template (e.g. LLaMA-3-8B-Instruct)."""
+        return bool(getattr(self._tokenizer, "chat_template", None))
+
+    def encode_chat(self, system: str, user: str) -> "Any":
+        """Encode sys+user pair using the tokenizer's chat template.
+
+        Uses apply_chat_template when available (instruction-tuned models like
+        LLaMA-3-8B-Instruct).  Falls back to raw concatenation for models without
+        a chat template (gpt2, raw base models).
+
+        This is required by Algorithm 1 (Cheng et al. 2025): the Figure 2 system
+        prompt must be placed in the <|system|> slot so the instruction-tuned
+        paraphraser honours it correctly.
+        """
+        if self.has_chat_template:
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ]
+            text = self._tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        else:
+            text = f"{system}\n\n{user}"
+        return self._tokenizer(text, return_tensors="pt").input_ids.to(self.device)
+
+    @property
     def eos_token_id(self) -> int:
         return self._tokenizer.eos_token_id or 0
 
