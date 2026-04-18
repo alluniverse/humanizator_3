@@ -11,11 +11,18 @@ import { Textarea, Select } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { PageSpinner } from "@/components/ui/spinner";
 import { MODE_LABEL, extractErrorMessage } from "@/lib/utils";
-import { Wand2, BookOpen, Info } from "lucide-react";
+import { Wand2, BookOpen, Info, Languages } from "lucide-react";
 import toast from "react-hot-toast";
 
 const MODES = ["conservative", "balanced", "expressive", "precision"] as const;
 const CONTRACT_MODES = ["strict", "balanced", "loose"] as const;
+
+const TRANSLATION_LANGS: { value: string; label: string }[] = [
+  { value: "uk", label: "Украинский" },
+  { value: "pl", label: "Польский" },
+  { value: "de", label: "Немецкий" },
+  { value: "fr", label: "Французский" },
+];
 
 const MODE_DESCRIPTION: Record<string, string> = {
   conservative: "Максимальное сохранение структуры, минимальные изменения",
@@ -30,6 +37,7 @@ export default function RewritePage() {
   const [libraryId, setLibraryId] = useState("");
   const [mode, setMode] = useState<string>("balanced");
   const [contractMode, setContractMode] = useState<string>("balanced");
+  const [translationTarget, setTranslationTarget] = useState<string>("");
 
   const { data: libraries, isLoading: libLoading } = useQuery({
     queryKey: ["libraries"],
@@ -43,6 +51,7 @@ export default function RewritePage() {
         library_id: libraryId,
         rewrite_mode: mode,
         semantic_contract_mode: contractMode,
+        input_constraints: translationTarget ? { translation_target: translationTarget } : undefined,
       });
       await rewriteApi.run(task.id);
       return task;
@@ -174,6 +183,30 @@ export default function RewritePage() {
                 Тексты длиннее 300 слов автоматически разбиваются на части с контекстным соединением.
               </p>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Translation layer */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Languages className="h-4 w-4" /> Перевод с адаптацией
+            </CardTitle>
+            <CardDescription>
+              После переписывания текст будет переведён и адаптирован на выбранный язык
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Select
+              value={translationTarget}
+              onChange={e => setTranslationTarget(e.target.value)}
+              label="Целевой язык (необязательно)"
+            >
+              <option value="">— не переводить —</option>
+              {TRANSLATION_LANGS.map(l => (
+                <option key={l.value} value={l.value}>{l.label}</option>
+              ))}
+            </Select>
           </CardContent>
         </Card>
 

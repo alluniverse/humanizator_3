@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import unicodedata
 from typing import Any
 
 from celery import chain
@@ -43,6 +45,15 @@ async def _run_stage(coro, task_id: str, stage: str) -> dict[str, Any]:
         raise
 
 
+def _strip_hidden_chars(text: str) -> str:
+    """Remove hidden/control Unicode characters that may come from copy-paste sources."""
+    text = text.lstrip('\ufeff')
+    text = re.sub(r'[\u200b\u200c\u200d\u200e\u200f\u00ad\ufeff\u2028\u2029]', '', text)
+    text = text.replace('\u00a0', ' ')
+    text = ''.join(ch for ch in text if unicodedata.category(ch)[0] != 'C' or ch in '\n\t\r')
+    return text
+
+
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=10)
 def process_rewrite_task(self, task_id: str) -> dict[str, Any]:
     """Orchestrate the full rewrite pipeline via Celery chain."""
@@ -52,6 +63,8 @@ def process_rewrite_task(self, task_id: str) -> dict[str, Any]:
             stage_analyze.s(task_id),
             stage_rewrite.s(),
             stage_evaluate.s(),
+            stage_translate.s(),
+            stage_adapt.s(),
             stage_complete.s(),
         )
         result = pipeline.apply_async()
@@ -97,9 +110,37 @@ def stage_evaluate(self, context: dict[str, Any]) -> dict[str, Any]:
         raise self.retry(exc=exc)
 
 
+@celery_app.task(bind=True, max_retries=2, default_retry_delay=15)
+def stage_translate(self, context: dict[str, Any]) -> dict[str, Any]:
+    """Stage 4a (optional): Translate rewritten text to target language."""
+    task_id = context["task_id"]
+    if not context.get("translation_target"):
+        return context
+    logger.info("[translate] task=%s target=%s", task_id, context["translation_target"])
+    try:
+        return _run_async(_run_stage(_do_translate(context), task_id, "translate"))
+    except Exception as exc:
+        logger.exception("[translate] failed task=%s", task_id)
+        raise self.retry(exc=exc)
+
+
+@celery_app.task(bind=True, max_retries=2, default_retry_delay=15)
+def stage_adapt(self, context: dict[str, Any]) -> dict[str, Any]:
+    """Stage 4b (optional): Adapt/humanize translated text."""
+    task_id = context["task_id"]
+    if not context.get("translation_target") or not context.get("translation_result"):
+        return context
+    logger.info("[adapt] task=%s", task_id)
+    try:
+        return _run_async(_run_stage(_do_adapt(context), task_id, "adapt"))
+    except Exception as exc:
+        logger.exception("[adapt] failed task=%s", task_id)
+        raise self.retry(exc=exc)
+
+
 @celery_app.task(bind=True, max_retries=1)
 def stage_complete(self, context: dict[str, Any]) -> dict[str, Any]:
-    """Stage 4: Persist variants and mark task completed."""
+    """Stage 5: Persist variants and mark task completed."""
     task_id = context["task_id"]
     logger.info("[complete] task=%s", task_id)
     try:
@@ -161,10 +202,12 @@ async def _do_analyze(task_id: str) -> dict[str, Any]:
                 "burstiness_index": profile.burstiness_index,
             }
 
-        original_text = task.original_text
+        original_text = _strip_hidden_chars(task.original_text)
         contract_mode = task.semantic_contract_mode.value
         rewrite_mode = task.rewrite_mode.value
-        user_instruction = (task.input_constraints or {}).get("user_instruction")
+        constraints = task.input_constraints or {}
+        user_instruction = constraints.get("user_instruction")
+        translation_target = constraints.get("translation_target") or None
 
     input_analysis = input_analyzer.analyze(
         original_text,
@@ -195,6 +238,7 @@ async def _do_analyze(task_id: str) -> dict[str, Any]:
         "original_text": original_text,
         "rewrite_mode": rewrite_mode,
         "user_instruction": user_instruction,
+        "translation_target": translation_target,
     }
 
 
@@ -330,6 +374,52 @@ async def _do_evaluate(context: dict[str, Any]) -> dict[str, Any]:
     return {**context, "variants": evaluated}
 
 
+async def _do_translate(context: dict[str, Any]) -> dict[str, Any]:
+    from adapters.llm import OpenAIProvider
+    from rewrite.prompts import get_translation_system_prompt
+
+    translation_target = context["translation_target"]
+    variants = context.get("variants", [])
+    if not variants:
+        return context
+
+    rewritten_text = variants[0]["text"]
+    provider = OpenAIProvider()
+    system = get_translation_system_prompt(translation_target)
+    try:
+        response = await provider.generate(
+            f"Text to translate:\n{rewritten_text}",
+            system_prompt=system,
+            temperature=0.3,
+            max_tokens=2048,
+        )
+        return {**context, "translation_result": response["text"]}
+    except Exception as exc:
+        logger.warning("[translate] LLM call failed: %s — skipping translation", exc)
+        return context
+
+
+async def _do_adapt(context: dict[str, Any]) -> dict[str, Any]:
+    from adapters.llm import OpenAIProvider
+    from rewrite.prompts import get_adaptation_system_prompt
+
+    translation_target = context["translation_target"]
+    translated_text = context["translation_result"]
+    provider = OpenAIProvider()
+    system = get_adaptation_system_prompt(translation_target)
+    try:
+        response = await provider.generate(
+            f"Text to revise:\n{translated_text}",
+            system_prompt=system,
+            temperature=0.7,
+            max_tokens=2048,
+        )
+        return {**context, "translation_adapted_text": response["text"]}
+    except Exception as exc:
+        logger.warning("[adapt] LLM call failed: %s — using raw translation", exc)
+        return {**context, "translation_adapted_text": translated_text}
+
+
 async def _do_complete(context: dict[str, Any]) -> dict[str, Any]:
     from infrastructure.db.models import EvaluationReport, RewriteTask, RewriteVariant
     from infrastructure.db.session import AsyncSessionLocal
@@ -364,6 +454,24 @@ async def _do_complete(context: dict[str, Any]) -> dict[str, Any]:
             session.add(rv)
             await session.flush()
             saved_variant_ids.append(str(rv.id))
+
+        translation_adapted = context.get("translation_adapted_text")
+        if translation_adapted:
+            from domain.enums import RewriteMode
+            tv = RewriteVariant(
+                task_id=task.id,
+                mode=RewriteMode.BALANCED,
+                final_text=translation_adapted,
+                intermediate_scores={
+                    "is_translation": True,
+                    "translation_target": context.get("translation_target"),
+                    "translation_raw": context.get("translation_result", ""),
+                },
+                is_valid=True,
+            )
+            session.add(tv)
+            await session.flush()
+            saved_variant_ids.append(str(tv.id))
 
         if saved_variant_ids:
             all_metrics = [v.get("metrics", {}) for v in variants]

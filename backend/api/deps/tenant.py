@@ -43,6 +43,7 @@ class TenantContext:
     project_id: uuid.UUID | None = None
     # Resolved tier (used for audit / rate limiting cross-reference)
     is_authenticated: bool = False
+    is_admin: bool = False
 
     @property
     def user_id_or_raise(self) -> uuid.UUID:
@@ -140,10 +141,12 @@ async def require_existing_user(
     """
     if ctx.user_id is None:
         return ctx
-    if await session.get(User, ctx.user_id) is None:
+    user = await session.get(User, ctx.user_id)
+    if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found — please log in again",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    ctx.is_admin = user.is_admin
     return ctx

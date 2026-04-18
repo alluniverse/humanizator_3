@@ -73,7 +73,12 @@ export default function TaskDetailPage() {
   if (isLoading) return <PageSpinner />;
   if (!task) return <div className="text-slate-500 p-6">Задача не найдена</div>;
 
-  const variant: Variant | undefined = Array.isArray(variants) ? variants[0] : undefined;
+  const variant: Variant | undefined = Array.isArray(variants)
+    ? variants.find(v => !v.is_translation)
+    : undefined;
+  const translationVariant: Variant | undefined = Array.isArray(variants)
+    ? variants.find(v => v.is_translation)
+    : undefined;
   const isActive = ACTIVE_STATUSES.has(task.status);
 
   return (
@@ -152,6 +157,27 @@ export default function TaskDetailPage() {
               metricsData={qc.getQueryData<EvalMetrics>(["eval-metrics", variant.rewritten_text])}
               adversarialData={qc.getQueryData<AdversarialResult>(["eval-adversarial", variant.rewritten_text])}
             />
+          )}
+
+          {/* Translation result */}
+          {translationVariant && (
+            <div className="space-y-2">
+              <h2 className="text-lg font-semibold text-slate-800">
+                Перевод с адаптацией
+                {translationVariant.translation_target && (
+                  <span className="ml-2 text-sm font-normal text-slate-500 uppercase">
+                    ({translationVariant.translation_target})
+                  </span>
+                )}
+              </h2>
+              <Card>
+                <CardContent className="p-4">
+                  <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
+                    {translationVariant.rewritten_text}
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
           )}
 
           {/* Refinement */}
@@ -305,6 +331,8 @@ interface Variant {
   variant_index?: number;
   review_status?: string;
   scores?: { semantic_similarity?: number; ai_score?: number; fluency?: number };
+  is_translation?: boolean;
+  translation_target?: string;
 }
 
 interface EvalMetrics { [key: string]: number | string; }

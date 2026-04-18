@@ -47,9 +47,19 @@ class Settings(BaseSettings):
     sentence_transformer_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
     deberta_model: str = "microsoft/deberta-v3-large"
     perplexity_model: str = "gpt2"
-    # Token-level precision model (T5.4) — requires local HuggingFace CausalLM
-    # with logit access; gpt2 is used as default for dev/testing
+
+    # Algorithm 1 (Cheng et al. 2025 arXiv:2506.07001v1) — Adversarial Paraphrasing
+    #
+    # Paraphraser LLM — requires AutoModelForCausalLM with logit access.
+    # Paper uses LLaMA-3-8B-Instruct; gpt2 is the dev/testing fallback (low quality).
+    # Recommended production value: meta-llama/Meta-Llama-3-8B-Instruct
     precision_model: str = "gpt2"
+    #
+    # Guidance detector D — trained AI-text classifier, lower output = more human-like.
+    # Paper uses openai-community/roberta-large-openai-detector.
+    # If unset, RobertaAIDetector will auto-load openai-community/roberta-base-openai-detector.
+    # Recommended: openai-community/roberta-large-openai-detector (1.4 GB, better accuracy)
+    ai_detector_model: str | None = None
 
     @field_validator("log_level")
     @classmethod

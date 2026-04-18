@@ -188,6 +188,8 @@ async def list_rewrite_variants(
                 "fluency": variant.fluency_win_rate,
             },
             is_valid=variant.is_valid,
+            is_translation=bool((variant.intermediate_scores or {}).get("is_translation")),
+            translation_target=(variant.intermediate_scores or {}).get("translation_target"),
             created_at=variant.created_at,
         )
         for index, variant in enumerate(variants, start=1)

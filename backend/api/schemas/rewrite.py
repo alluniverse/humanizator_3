@@ -49,6 +49,8 @@ class RewriteVariantRead(BaseModel):
     review_status: str
     scores: dict[str, Any]
     is_valid: bool
+    is_translation: bool = False
+    translation_target: str | None = None
     created_at: datetime.datetime
 
 
