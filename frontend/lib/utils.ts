@@ -26,6 +26,7 @@ export const MODE_LABEL: Record<string, string> = {
   conservative: "Консервативный",
   balanced: "Сбалансированный",
   expressive: "Экспрессивный",
+  best_of_n: "Best-of-N (API)",
   precision: "Точный (token-level)",
 };
 

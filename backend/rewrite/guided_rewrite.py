@@ -48,9 +48,13 @@ class GuidedRewriteEngine:
         reference_samples: list[str] | None = None,
         user_instruction: str | None = None,
     ) -> dict[str, Any]:
-        """Generate a single rewrite variant (direct, chunk-level, or precision)."""
+        """Generate a single rewrite variant (direct, chunk-level, precision, or best_of_n)."""
         if mode == "precision":
             return await self._rewrite_precision(text, style_profile, contract, reference_samples)
+        if mode == "best_of_n":
+            return await self._rewrite_best_of_n(
+                text, style_profile, contract, reference_samples, user_instruction
+            )
         word_count = len(text.split())
         if word_count > CHUNK_THRESHOLD_WORDS:
             return await self._rewrite_chunked(
@@ -75,6 +79,76 @@ class GuidedRewriteEngine:
             )
             variants.append(variant)
         return variants
+
+    # ------------------------------------------------------------------
+    # Best-of-N: generate N variants via API, pick lowest AI-score
+    # ------------------------------------------------------------------
+
+    async def _rewrite_best_of_n(
+        self,
+        text: str,
+        style_profile: dict[str, Any] | None,
+        contract: dict[str, Any] | None,
+        reference_samples: list[str] | None,
+        user_instruction: str | None = None,
+    ) -> dict[str, Any]:
+        """Generate N variants concurrently, score with AI detector, return the best.
+
+        Unlike precision mode (requires local LLM + logit access), this works with
+        any API provider.  Only a local AI detector (~0.5 GB) is needed for scoring.
+        """
+        import asyncio
+        from infrastructure.config import settings
+
+        n = getattr(settings, "best_of_n_count", 5)
+
+        # Use balanced mode at high temperature for maximum diversity
+        tasks = [
+            self._rewrite_direct(
+                text, "balanced", style_profile, contract, reference_samples, user_instruction
+            )
+            for _ in range(n)
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        variants = [r for r in results if isinstance(r, dict) and r.get("text", "").strip()]
+
+        if not variants:
+            logger.warning("best_of_n: all %d variants failed, returning empty", n)
+            return {"mode": "best_of_n", "text": "", "usage": {}, "chunks_count": 0, "candidates_count": 0}
+
+        # Score each variant with the AI detector (lazy-loaded RoBERTa / GPT-2 fallback)
+        try:
+            from application.services.token_precision import _get_default_ai_scorer
+            scorer = _get_default_ai_scorer()
+            scored = [(v, scorer.score(v["text"])) for v in variants]
+            scored.sort(key=lambda x: x[1])  # ascending: lower = more human-like
+            best, best_score = scored[0]
+            all_scores = [round(s, 3) for _, s in scored]
+            logger.info(
+                "best_of_n: %d variants scored — best=%.3f worst=%.3f",
+                len(variants), best_score, scored[-1][1],
+            )
+        except Exception as exc:
+            logger.warning("best_of_n: scoring failed (%s) — using first variant", exc)
+            best = variants[0]
+            best_score = None
+            all_scores = []
+
+        # Aggregate token usage across all variants
+        total_usage: dict[str, int] = {}
+        for v in variants:
+            for k, val in v.get("usage", {}).items():
+                total_usage[k] = total_usage.get(k, 0) + val
+
+        return {
+            "mode": "best_of_n",
+            "text": best["text"],
+            "usage": total_usage,
+            "chunks_count": best.get("chunks_count", 1),
+            "candidates_count": len(variants),
+            "best_ai_score": round(best_score, 3) if best_score is not None else None,
+            "all_ai_scores": all_scores,
+        }
 
     # ------------------------------------------------------------------
     # Token-level Precision Guided rewrite (T5.4 / Algorithm 1)

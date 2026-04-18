@@ -14,7 +14,7 @@ import { MODE_LABEL, extractErrorMessage } from "@/lib/utils";
 import { Wand2, BookOpen, Info, Languages } from "lucide-react";
 import toast from "react-hot-toast";
 
-const MODES = ["conservative", "balanced", "expressive", "precision"] as const;
+const MODES = ["conservative", "balanced", "expressive", "best_of_n", "precision"] as const;
 const CONTRACT_MODES = ["strict", "balanced", "loose"] as const;
 
 const TRANSLATION_LANGS: { value: string; label: string }[] = [
@@ -28,6 +28,7 @@ const MODE_DESCRIPTION: Record<string, string> = {
   conservative: "Максимальное сохранение структуры, минимальные изменения",
   balanced: "Оптимальный баланс между изменениями и сохранением смысла",
   expressive: "Максимальная стилистическая трансформация с опорой на образцы",
+  best_of_n: "Генерирует 5 вариантов через API, выбирает с минимальным AI-score (рекомендуется)",
   precision: "Token-level выбор токенов с минимальным AI-score (требует локальную модель)",
 };
 

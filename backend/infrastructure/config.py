@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     deberta_model: str = "microsoft/deberta-v3-large"
     perplexity_model: str = "gpt2"
 
+    # Best-of-N mode — generate N API variants, pick the one with lowest AI-detector score.
+    # Only requires local RoBERTa detector (~0.5 GB VRAM); no local LLM needed.
+    best_of_n_count: int = 5
+
     # Algorithm 1 (Cheng et al. 2025 arXiv:2506.07001v1) — Adversarial Paraphrasing
     #
     # Paraphraser LLM — requires AutoModelForCausalLM with logit access.

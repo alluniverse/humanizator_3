@@ -21,6 +21,7 @@ class RewriteMode(str, Enum):
     BALANCED = "balanced"
     EXPRESSIVE = "expressive"
     PRECISION = "precision"
+    BEST_OF_N = "best_of_n"
 
 
 class SemanticContractMode(str, Enum):
