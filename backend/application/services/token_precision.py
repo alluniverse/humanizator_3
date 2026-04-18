@@ -187,8 +187,82 @@ class SimpleAIScorer:
             return 0.5
 
 
+class CompositeHumanLikenessScorer:
+    """Heuristic AI-likeness scorer that works for modern LLMs (GPT-4o, Claude, etc.).
+
+    roberta-base-openai-detector was trained on GPT-2 era text and scores ALL
+    modern LLM outputs near 0.000 (useless for guidance).  This scorer combines
+    three signals that are meaningful for current models:
+
+      1. GPT-2 perplexity  — AI text is highly predictable (low PPL); human text
+                              is less predictable (high PPL).  Higher PPL → lower AI score.
+      2. Burstiness         — AI sentences are uniform in length; humans vary them.
+                              Higher burstiness → lower AI score.
+      3. AI marker count    — Explicit pattern matching against known AI phrases.
+                              More markers → higher AI score.
+
+    Returns score ∈ [0, 1] where 0 = human-like, 1 = AI-like.
+    """
+
+    _AI_MARKERS = [
+        # English
+        "it is important to note", "it is worth", "it should be noted",
+        "furthermore", "moreover", "in addition", "in conclusion", "to summarize",
+        "in summary", "first and foremost", "absolutely", "undoubtedly",
+        "notably", "crucially", "essentially", "fundamentally",
+        "in the realm of", "at its core", "at the heart of",
+        "this cooperation is a win-win", "win-win", "make no mistake",
+        "it is crucial", "needless to say", "it goes without saying",
+        "overall, this", "in conclusion,", "to summarize,",
+        # Russian
+        "стоит отметить", "необходимо отметить", "следует отметить",
+        "таким образом", "в заключение", "подводя итог", "в целом",
+        "безусловно", "несомненно", "очевидно",
+        # Ukrainian
+        "варто зазначити", "необхідно відзначити", "таким чином",
+        "у висновку", "загалом", "безперечно",
+    ]
+
+    def __init__(self) -> None:
+        self._ppl_scorer = SimpleAIScorer()
+
+    def score(self, text: str) -> float:
+        """Return AI-likeness score ∈ [0, 1]. Lower = more human-like."""
+        if not text.strip():
+            return 0.5
+
+        # 1. Perplexity component (already normalised 0-1)
+        ppl_score = self._ppl_scorer.score(text)
+
+        # 2. Burstiness component: std/mean of sentence word counts
+        import re
+        sentences = [s.strip() for s in re.split(r"[.!?]+", text) if s.strip()]
+        if len(sentences) >= 2:
+            lengths = [len(s.split()) for s in sentences]
+            mean_len = sum(lengths) / len(lengths)
+            variance = sum((l - mean_len) ** 2 for l in lengths) / len(lengths)
+            burstiness = (variance ** 0.5) / mean_len if mean_len > 0 else 0.0
+            # burstiness=0 (all same length) → penalty=0.3; burstiness=1+ → penalty=0
+            burstiness_penalty = max(0.0, 0.3 - burstiness * 0.3)
+        else:
+            burstiness_penalty = 0.15
+
+        # 3. AI marker component
+        lower = text.lower()
+        marker_count = sum(1 for m in self._AI_MARKERS if m in lower)
+        marker_score = min(marker_count * 0.08, 0.4)
+
+        composite = ppl_score * 0.5 + burstiness_penalty + marker_score
+        return float(max(0.0, min(1.0, composite)))
+
+
 def _build_default_ai_scorer() -> "RobertaAIDetector | SimpleAIScorer":
-    """Build best available AI detector: RoBERTa if possible, GPT-2 perplexity fallback."""
+    """Build best available AI detector for Algorithm 1 token-level guidance.
+
+    NOTE: roberta-base-openai-detector is trained on GPT-2 era text and gives
+    near-zero scores for GPT-4o output — useless for best_of_n selection.
+    Use CompositeHumanLikenessScorer for best_of_n via build_best_of_n_scorer().
+    """
     from infrastructure.config import settings
     detector_model = getattr(settings, "ai_detector_model", None)
     if detector_model:
@@ -199,6 +273,15 @@ def _build_default_ai_scorer() -> "RobertaAIDetector | SimpleAIScorer":
     except Exception:
         logger.warning("RobertaAIDetector unavailable — using SimpleAIScorer perplexity fallback")
         return SimpleAIScorer()
+
+
+def build_best_of_n_scorer() -> "CompositeHumanLikenessScorer":
+    """Return the scorer to use for best_of_n variant selection.
+
+    CompositeHumanLikenessScorer is reliable for modern LLM output (GPT-4o etc.)
+    where roberta-base-openai-detector gives useless near-zero scores.
+    """
+    return CompositeHumanLikenessScorer()
 
 
 # Lazily initialised — avoids importing torch/transformers at module load time.

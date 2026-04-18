@@ -116,10 +116,12 @@ class GuidedRewriteEngine:
             logger.warning("best_of_n: all %d variants failed, returning empty", n)
             return {"mode": "best_of_n", "text": "", "usage": {}, "chunks_count": 0, "candidates_count": 0}
 
-        # Score each variant with the AI detector (lazy-loaded RoBERTa / GPT-2 fallback)
+        # Score each variant with composite heuristic scorer.
+        # roberta-base-openai-detector scores ALL GPT-4o text near 0.000 (useless).
+        # CompositeHumanLikenessScorer combines perplexity + burstiness + marker count.
         try:
-            from application.services.token_precision import _get_default_ai_scorer
-            scorer = _get_default_ai_scorer()
+            from application.services.token_precision import build_best_of_n_scorer
+            scorer = build_best_of_n_scorer()
             scored = [(v, scorer.score(v["text"])) for v in variants]
             scored.sort(key=lambda x: x[1])  # ascending: lower = more human-like
             best, best_score = scored[0]
