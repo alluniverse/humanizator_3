@@ -242,11 +242,11 @@ async def _do_rewrite(context: dict[str, Any]) -> dict[str, Any]:
     constraint_layer = RewriteConstraintLayer()
     validated_variants: list[dict[str, Any]] = []
     for variant in raw_variants:
-        validation = constraint_layer.validate(
+        validation = constraint_layer.validate_all(
             original=original_text,
             rewritten=variant["text"],
-            mode=variant["mode"],
             contract=contract,
+            language=language,
         )
         variant["constraint_validation"] = validation
         validated_variants.append(variant)
@@ -339,7 +339,7 @@ async def _do_complete(context: dict[str, Any]) -> dict[str, Any]:
                 task_id=task.id,
                 mode=v["mode"],
                 final_text=v["text"],
-                style_match_score=v.get("guidance_score", {}).get("style_score"),
+                style_match_score=v.get("guidance_score", {}).get("style_match"),
                 semantic_preservation_score=metrics.get("bertscore_f1"),
                 perplexity_score=metrics.get("perplexity"),
                 burstiness_score=metrics.get("burstiness"),

@@ -31,6 +31,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True)
+    is_admin: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default_factory=_now, server_default=func.now(), init=False)
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default_factory=_now, server_default=func.now(), onupdate=func.now(), init=False)
 
@@ -179,7 +180,7 @@ class EvaluationReport(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default_factory=uuid.uuid4, init=False)
     task_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("rewrite_tasks.id"), nullable=False)
-    variant_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("rewrite_variants.id"), nullable=True)
+    variant_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("rewrite_variants.id"), nullable=True, default=None)
     absolute_metrics: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=None)
     judge_scores: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=None)
     pairwise_scores: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True, default=None)

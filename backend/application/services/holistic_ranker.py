@@ -193,7 +193,7 @@ class HolisticLexicalSubstitutionRanker:
         """
         emb1 = self._get_weighted_embedding_ig(sent1)
         emb2 = self._get_weighted_embedding_ig(sent2)
-        return float(F.cosine_similarity(emb1, emb2, dim=-1).item())
+        return float(torch_f.cosine_similarity(emb1, emb2, dim=-1).item())
 
     def _get_weighted_embedding_attention(self, text: str) -> torch.Tensor:
         """Token-weighted embedding via attention aggregation.
@@ -288,7 +288,7 @@ class HolisticLexicalSubstitutionRanker:
         ig_weights = ig_weights * (target_emb - baseline_emb).norm(dim=-1)
 
         # Normalize
-        ig_weights = F.softmax(ig_weights, dim=0)  # (seq,)
+        ig_weights = torch_f.softmax(ig_weights, dim=0)  # (seq,)
 
         # Get final hidden states for weighted sum
         with torch.no_grad():
