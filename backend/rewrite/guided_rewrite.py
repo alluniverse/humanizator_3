@@ -16,6 +16,7 @@ from rewrite.prompts import (
     build_precision_prompt,
     build_user_prompt,
     get_system_prompt,
+    get_refinement_system_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -85,15 +86,22 @@ class GuidedRewriteEngine:
         contract: dict[str, Any] | None,
         reference_samples: list[str] | None,
     ) -> dict[str, Any]:
-        """Token-level guided rewrite: select each token to minimise AI-score.
+        """Token-level adversarial paraphrasing (Algorithm 1, Cheng et al. 2025).
 
-        Requires HFPrecisionProvider (local HuggingFace model with logit access).
-        Falls back to standard balanced generation if provider is unavailable.
+        Uses HFPrecisionProvider (local CausalLM with logit access) + a guidance
+        detector to select the most human-like token at each decoding step.
+        Falls back to standard balanced generation if the local model is unavailable.
         """
         try:
             from application.services.token_precision import token_precision_engine
+            # build_precision_prompt returns the full input: system instruction
+            # from Figure 2 + the source text.  The engine feeds this as the
+            # complete prompt to the paraphraser LLM and scores generated tokens
+            # using only y_m (the output so far).
             prompt = build_precision_prompt(text, style_profile, contract)
             result = await token_precision_engine.generate_async(prompt)
+            if not result.get("text", "").strip():
+                raise ValueError("Precision engine returned empty text")
             return {
                 "mode": "precision",
                 "text": result["text"],
@@ -127,7 +135,7 @@ class GuidedRewriteEngine:
         reference_samples: list[str] | None,
         user_instruction: str | None = None,
     ) -> dict[str, Any]:
-        ref = reference_samples[0] if reference_samples and mode == "expressive" else None
+        ref = reference_samples[0] if reference_samples else None
         system = get_system_prompt(mode, ref)
         user = build_user_prompt(text, style_profile, contract, ref, user_instruction=user_instruction)
         response = await self._provider.generate(
@@ -135,12 +143,46 @@ class GuidedRewriteEngine:
             system_prompt=system,
             temperature=self._temperature_for_mode(mode),
         )
+        result_text = response["text"]
+        total_usage = dict(response.get("usage", {}))
+
+        # Refinement pass: if AI markers still detected, do a targeted second pass
+        if self._has_ai_markers(result_text):
+            refinement_user = f"Text to refine:\n{result_text}"
+            ref_response = await self._provider.generate(
+                refinement_user,
+                system_prompt=get_refinement_system_prompt(),
+                temperature=self._temperature_for_mode(mode),
+            )
+            if ref_response.get("text", "").strip():
+                result_text = ref_response["text"]
+                for k, v in ref_response.get("usage", {}).items():
+                    total_usage[k] = total_usage.get(k, 0) + v
+
         return {
             "mode": mode,
-            "text": response["text"],
-            "usage": response.get("usage", {}),
+            "text": result_text,
+            "usage": total_usage,
             "chunks_count": 1,
         }
+
+    _AI_MARKER_PATTERNS = [
+        # English
+        "it is important to note", "it is worth", "it should be noted",
+        "furthermore", "moreover", "in addition", "in conclusion", "to summarize",
+        "in summary", "first and foremost", "absolutely", "undoubtedly", "certainly",
+        "notably", "crucially", "essentially", "fundamentally",
+        "in the realm of", "at its core", "at the heart of",
+        # Russian
+        "стоит отметить", "необходимо отметить", "следует отметить",
+        "важно понимать", "нельзя не отметить", "таким образом",
+        "в заключение", "подводя итог", "в целом", "безусловно",
+        "несомненно", "очевидно", "действительно",
+    ]
+
+    def _has_ai_markers(self, text: str) -> bool:
+        lower = text.lower()
+        return any(marker in lower for marker in self._AI_MARKER_PATTERNS)
 
     # ------------------------------------------------------------------
     # Chunk-level rewrite (T5.5)
@@ -165,7 +207,7 @@ class GuidedRewriteEngine:
         total_usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         prev_context: str | None = None
 
-        ref = reference_samples[0] if reference_samples and mode == "expressive" else None
+        ref = reference_samples[0] if reference_samples else None
         system = get_system_prompt(mode, ref)
         for i, chunk in enumerate(chunks):
             user = build_user_prompt(
@@ -264,7 +306,7 @@ class GuidedRewriteEngine:
         return "\n\n".join(c.strip() for c in chunks if c.strip())
 
     def _temperature_for_mode(self, mode: str) -> float:
-        return {"conservative": 0.55, "balanced": 0.75, "expressive": 0.95}.get(mode, 0.75)
+        return {"conservative": 0.75, "balanced": 0.90, "expressive": 1.05}.get(mode, 0.90)
 
 
 guided_rewrite_engine = GuidedRewriteEngine()
