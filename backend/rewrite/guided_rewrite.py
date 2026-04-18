@@ -188,9 +188,11 @@ class GuidedRewriteEngine:
                     total_usage[k] += response.get("usage", {}).get(k, 0)
                 # Build context for next chunk (first sentence of current result)
                 prev_context = self._first_sentence(rewritten)
-            except RuntimeError:
-                raise
             except Exception as exc:
+                # Re-raise provider/config errors so the task fails visibly
+                from openai import APIConnectionError, APIStatusError, AuthenticationError
+                if isinstance(exc, (RuntimeError, AuthenticationError, APIConnectionError, APIStatusError)):
+                    raise
                 logger.warning("Chunk %d/%d rewrite failed: %s — using original", i + 1, len(chunks), exc)
                 rewritten_chunks.append(chunk)
 
