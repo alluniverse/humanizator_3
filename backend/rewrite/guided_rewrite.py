@@ -181,6 +181,8 @@ class GuidedRewriteEngine:
                     total_usage[k] += response.get("usage", {}).get(k, 0)
                 # Build context for next chunk (first sentence of current result)
                 prev_context = self._first_sentence(rewritten)
+            except RuntimeError:
+                raise
             except Exception as exc:
                 logger.warning("Chunk %d/%d rewrite failed: %s — using original", i + 1, len(chunks), exc)
                 rewritten_chunks.append(chunk)
