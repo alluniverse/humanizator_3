@@ -32,11 +32,13 @@ async def seed():
         admin = result.scalar_one_or_none()
         
         if not admin:
-            admin = User(email="admin@admin.com", full_name="Admin", is_active=True)
+            admin = User(email="admin@admin.com", full_name="Admin", is_active=True, is_admin=True)
             session.add(admin)
             await session.flush()
             print(f"Created admin user: {admin.id}")
         else:
+            if not admin.is_admin:
+                admin.is_admin = True
             print(f"Admin user exists: {admin.id}")
         
         # Check if default project exists

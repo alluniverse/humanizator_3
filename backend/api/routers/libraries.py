@@ -66,7 +66,7 @@ async def create_library(
 @router.get("", response_model=list[StyleLibraryRead])
 async def list_libraries(
     session: AsyncSession = Depends(get_async_session),
-    ctx: TenantContext = Depends(get_current_tenant),
+    ctx: TenantContext = Depends(require_existing_user),
 ) -> list[StyleLibraryRead]:
     query = (
         select(StyleLibrary, func.count(StyleSample.id).label("sample_count"))
@@ -74,7 +74,7 @@ async def list_libraries(
         .where(StyleLibrary.status == "active")
         .group_by(StyleLibrary.id)
     )
-    if ctx.user_id is not None:
+    if ctx.user_id is not None and not ctx.is_admin:
         query = query.where(StyleLibrary.owner_id == ctx.user_id)
     rows = (await session.execute(query)).all()
     result = []
