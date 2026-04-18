@@ -79,6 +79,7 @@ def build_user_prompt(
     chunk_idx: int = 0,
     total_chunks: int = 1,
     prev_context: str | None = None,
+    user_instruction: str | None = None,
 ) -> str:
     """Build the user-turn content: context + constraints + text."""
     lines: list[str] = []
@@ -95,6 +96,9 @@ def build_user_prompt(
     style_note = _style_note(style_profile)
     if style_note:
         lines.append(style_note)
+
+    if user_instruction:
+        lines.append(f"Additional requirement: {user_instruction}")
 
     if reference_sample:
         lines.append(f"Reference style:\n{reference_sample[:600]}")

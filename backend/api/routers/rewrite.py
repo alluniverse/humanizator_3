@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps.tenant import TenantContext, get_current_tenant, require_existing_user
 from api.rate_limiter import rate_limit_requests, rate_limit_rewrite
 from api.schemas.rewrite import (
+    RewriteRunRequest,
     RewriteTaskCreate,
     RewriteTaskRead,
     RewriteVariantRead,
@@ -109,6 +110,7 @@ async def get_rewrite_task(
 @router.post("/{task_id}/run", dependencies=[Depends(rate_limit_requests), Depends(rate_limit_rewrite)])
 async def run_rewrite_task(
     task_id: uuid.UUID,
+    body: RewriteRunRequest = RewriteRunRequest(),
     session: AsyncSession = Depends(get_async_session),
     ctx: TenantContext = Depends(get_current_tenant),
 ) -> dict[str, Any]:
@@ -124,6 +126,12 @@ async def run_rewrite_task(
     }:
         return {"task_id": str(task.id), "status": task.status.value, "queued": False}
 
+    constraints = dict(task.input_constraints or {})
+    if body.user_instruction:
+        constraints["user_instruction"] = body.user_instruction
+    elif "user_instruction" in constraints:
+        del constraints["user_instruction"]
+    task.input_constraints = constraints
     task.status = RewriteTaskStatus.ANALYZING
     task.error_message = None
     await session.commit()

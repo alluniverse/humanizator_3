@@ -163,6 +163,8 @@ async def _do_analyze(task_id: str) -> dict[str, Any]:
 
         original_text = task.original_text
         contract_mode = task.semantic_contract_mode.value
+        rewrite_mode = task.rewrite_mode.value
+        user_instruction = (task.input_constraints or {}).get("user_instruction")
 
     input_analysis = input_analyzer.analyze(
         original_text,
@@ -191,6 +193,8 @@ async def _do_analyze(task_id: str) -> dict[str, Any]:
         "contract": contract,
         "importance_scores": importance_scores,
         "original_text": original_text,
+        "rewrite_mode": rewrite_mode,
+        "user_instruction": user_instruction,
     }
 
 
@@ -206,6 +210,7 @@ async def _do_rewrite(context: dict[str, Any]) -> dict[str, Any]:
     style_profile = context.get("style_profile")
     contract = context["contract"]
     original_text = context["original_text"]
+    user_instruction = context.get("user_instruction")
 
     async with AsyncSessionLocal() as session:
         task = await session.get(RewriteTask, task_id)
@@ -231,12 +236,17 @@ async def _do_rewrite(context: dict[str, Any]) -> dict[str, Any]:
             )
             l1_samples = [s.content for s in fallback.scalars().all()]
 
-    raw_variants = await guided_rewrite_engine.rewrite_all_modes(
-        original_text,
-        style_profile=style_profile,
-        contract=contract,
-        reference_samples=l1_samples or None,
-    )
+    mode = context.get("rewrite_mode", "balanced")
+    raw_variants = [
+        await guided_rewrite_engine.rewrite(
+            original_text,
+            mode=mode,
+            style_profile=style_profile,
+            contract=contract,
+            reference_samples=l1_samples or None,
+            user_instruction=user_instruction,
+        )
+    ]
 
     # Validate constraints (POS + MPR + USE)
     constraint_layer = RewriteConstraintLayer()

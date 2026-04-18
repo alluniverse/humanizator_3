@@ -44,6 +44,7 @@ class GuidedRewriteEngine:
         style_profile: dict[str, Any] | None = None,
         contract: dict[str, Any] | None = None,
         reference_samples: list[str] | None = None,
+        user_instruction: str | None = None,
     ) -> dict[str, Any]:
         """Generate a single rewrite variant (direct, chunk-level, or precision)."""
         if mode == "precision":
@@ -51,10 +52,10 @@ class GuidedRewriteEngine:
         word_count = len(text.split())
         if word_count > CHUNK_THRESHOLD_WORDS:
             return await self._rewrite_chunked(
-                text, mode, style_profile, contract, reference_samples
+                text, mode, style_profile, contract, reference_samples, user_instruction
             )
         return await self._rewrite_direct(
-            text, mode, style_profile, contract, reference_samples
+            text, mode, style_profile, contract, reference_samples, user_instruction
         )
 
     async def rewrite_all_modes(
@@ -124,10 +125,11 @@ class GuidedRewriteEngine:
         style_profile: dict[str, Any] | None,
         contract: dict[str, Any] | None,
         reference_samples: list[str] | None,
+        user_instruction: str | None = None,
     ) -> dict[str, Any]:
         ref = reference_samples[0] if reference_samples and mode == "expressive" else None
         system = get_system_prompt(mode, ref)
-        user = build_user_prompt(text, style_profile, contract, ref)
+        user = build_user_prompt(text, style_profile, contract, ref, user_instruction=user_instruction)
         response = await self._provider.generate(
             user,
             system_prompt=system,
@@ -151,6 +153,7 @@ class GuidedRewriteEngine:
         style_profile: dict[str, Any] | None,
         contract: dict[str, Any] | None,
         reference_samples: list[str] | None,
+        user_instruction: str | None = None,
     ) -> dict[str, Any]:
         """Rewrite long text by splitting into paragraph-level chunks.
 
@@ -169,6 +172,7 @@ class GuidedRewriteEngine:
                 chunk, style_profile, contract, ref,
                 is_chunk=True, chunk_idx=i, total_chunks=len(chunks),
                 prev_context=prev_context,
+                user_instruction=user_instruction,
             )
             try:
                 response = await self._provider.generate(

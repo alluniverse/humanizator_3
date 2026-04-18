@@ -7,9 +7,10 @@ import { rewriteApi, evaluationApi } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import { PageSpinner, Spinner } from "@/components/ui/spinner";
 import { STATUS_COLOR, MODE_LABEL, formatDate, extractErrorMessage } from "@/lib/utils";
-import { ArrowLeft, Play, ChevronDown, ChevronUp, Shield, BarChart2, CheckSquare2 } from "lucide-react";
+import { ArrowLeft, Play, RotateCcw, Shield, BarChart2, CheckSquare2 } from "lucide-react";
 import Link from "next/link";
 import toast from "react-hot-toast";
 
@@ -19,8 +20,7 @@ export default function TaskDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const qc = useQueryClient();
-  const [expandedVariant, setExpandedVariant] = useState<string | null>(null);
-  const [evalTarget, setEvalTarget] = useState<string | null>(null);
+  const [refinement, setRefinement] = useState("");
 
   const { data: task, isLoading } = useQuery({
     queryKey: ["task", id],
@@ -38,9 +38,10 @@ export default function TaskDetailPage() {
   });
 
   const runTask = useMutation({
-    mutationFn: () => rewriteApi.run(id),
+    mutationFn: (body?: { user_instruction?: string }) => rewriteApi.run(id, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["task", id] });
+      qc.invalidateQueries({ queryKey: ["task-variants", id] });
       toast.success("Задача запущена");
     },
     onError: (e: unknown) => {
@@ -48,10 +49,14 @@ export default function TaskDetailPage() {
     },
   });
 
+  const handleRefinement = () => {
+    const instruction = refinement.trim();
+    runTask.mutate(instruction ? { user_instruction: instruction } : undefined);
+  };
+
   const evalMetrics = useMutation({
     mutationFn: (text: string) => evaluationApi.absoluteMetrics(id, text),
     onSuccess: (data, text) => {
-      setEvalTarget(text);
       qc.setQueryData(["eval-metrics", text], data);
     },
     onError: () => toast.error("Ошибка оценки метрик"),
@@ -68,7 +73,8 @@ export default function TaskDetailPage() {
   if (isLoading) return <PageSpinner />;
   if (!task) return <div className="text-slate-500 p-6">Задача не найдена</div>;
 
-  const variantList: Variant[] = Array.isArray(variants) ? variants : [];
+  const variant: Variant | undefined = Array.isArray(variants) ? variants[0] : undefined;
+  const isActive = ACTIVE_STATUSES.has(task.status);
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -86,7 +92,7 @@ export default function TaskDetailPage() {
           <p className="text-xs text-slate-400 mt-1">Создана {formatDate(task.created_at)}</p>
         </div>
         <div className="flex gap-2">
-          {task.status === "completed" && variantList.length > 0 && (
+          {task.status === "completed" && variant && (
             <Link href={`/hitl/${id}`}>
               <Button variant="outline" size="sm">
                 <CheckSquare2 className="h-4 w-4" /> Проверить HITL
@@ -110,14 +116,15 @@ export default function TaskDetailPage() {
         </CardContent>
       </Card>
 
-      {/* Status info */}
-      {ACTIVE_STATUSES.has(task.status) && (
+      {/* Active status */}
+      {isActive && (
         <div className="flex items-center gap-3 rounded-lg bg-blue-50 border border-blue-200 p-4">
           <Spinner className="h-5 w-5 text-blue-500" />
           <p className="text-sm text-blue-700">Задача выполняется... Страница обновится автоматически.</p>
         </div>
       )}
 
+      {/* Error */}
       {task.status === "failed" && task.error_message && (
         <div className="rounded-lg bg-red-50 border border-red-200 p-4">
           <p className="text-sm font-medium text-red-700">Ошибка выполнения</p>
@@ -125,138 +132,161 @@ export default function TaskDetailPage() {
         </div>
       )}
 
-      {/* Variants */}
+      {/* Result */}
       {task.status === "completed" && (
         <div className="space-y-4">
-          <h2 className="text-lg font-semibold text-slate-800">
-            Варианты переписывания {variantsLoading ? "" : `(${variantList.length})`}
-          </h2>
+          <h2 className="text-lg font-semibold text-slate-800">Результат</h2>
 
           {variantsLoading ? (
             <PageSpinner />
-          ) : variantList.length === 0 ? (
-            <div className="py-10 text-center text-slate-400">Нет вариантов</div>
+          ) : !variant ? (
+            <div className="py-10 text-center text-slate-400">Нет результата</div>
           ) : (
-            variantList.map((v) => {
-              const isExpanded = expandedVariant === v.id;
-              const metricsData = qc.getQueryData<EvalMetrics>(["eval-metrics", v.rewritten_text]);
-              const adversarialData = qc.getQueryData<AdversarialResult>(["eval-adversarial", v.rewritten_text]);
-
-              return (
-                <Card key={v.id} className="overflow-hidden">
-                  <CardContent className="p-0">
-                    {/* Variant header */}
-                    <div
-                      className="flex items-center gap-3 p-4 cursor-pointer hover:bg-slate-50"
-                      onClick={() => setExpandedVariant(isExpanded ? null : v.id)}
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">
-                            Вариант #{v.variant_index ?? 1}
-                          </span>
-                          {v.review_status && (
-                            <Badge variant="outline" className="text-xs">
-                              {v.review_status}
-                            </Badge>
-                          )}
-                          {v.scores && (
-                            <div className="flex gap-2 ml-2">
-                              {v.scores.semantic_similarity != null && (
-                                <span className="text-xs text-slate-500">
-                                  Sim: <strong>{(v.scores.semantic_similarity * 100).toFixed(0)}%</strong>
-                                </span>
-                              )}
-                              {v.scores.ai_score != null && (
-                                <span className="text-xs text-slate-500">
-                                  AI: <strong>{(v.scores.ai_score * 100).toFixed(0)}%</strong>
-                                </span>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                        <p className="text-sm text-slate-700 line-clamp-2">{v.rewritten_text}</p>
-                      </div>
-                      {isExpanded ? (
-                        <ChevronUp className="h-4 w-4 text-slate-400 flex-shrink-0" />
-                      ) : (
-                        <ChevronDown className="h-4 w-4 text-slate-400 flex-shrink-0" />
-                      )}
-                    </div>
-
-                    {/* Expanded content */}
-                    {isExpanded && (
-                      <div className="border-t border-slate-100 p-4 space-y-4 bg-slate-50/50">
-                        <p className="text-sm text-slate-700 whitespace-pre-wrap">{v.rewritten_text}</p>
-
-                        {/* Evaluation actions */}
-                        <div className="flex gap-2 flex-wrap">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            loading={evalMetrics.isPending && evalTarget === v.rewritten_text}
-                            onClick={() => evalMetrics.mutate(v.rewritten_text)}
-                          >
-                            <BarChart2 className="h-4 w-4" /> Метрики
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            loading={evalAdversarial.isPending}
-                            onClick={() => evalAdversarial.mutate(v.rewritten_text)}
-                          >
-                            <Shield className="h-4 w-4" /> Adversarial
-                          </Button>
-                        </div>
-
-                        {/* Metrics result */}
-                        {metricsData && (
-                          <div className="rounded-lg border bg-white p-3 space-y-2">
-                            <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Метрики</p>
-                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                              {Object.entries(metricsData).map(([key, val]) =>
-                                typeof val === "number" ? (
-                                  <div key={key} className="text-center">
-                                    <p className="text-lg font-bold text-slate-800">{(val * 100).toFixed(1)}<span className="text-xs">%</span></p>
-                                    <p className="text-xs text-slate-500">{key.replace(/_/g, " ")}</p>
-                                  </div>
-                                ) : null
-                              )}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Adversarial result */}
-                        {adversarialData && (
-                          <div className="rounded-lg border bg-white p-3 space-y-2">
-                            <div className="flex items-center gap-2">
-                              <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Adversarial тест</p>
-                              <Badge className={adversarialData.passed ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}>
-                                {adversarialData.passed ? "Пройден" : "Провален"}
-                              </Badge>
-                            </div>
-                            <p className="text-xs text-slate-500">
-                              Средняя схожесть: <strong>{(adversarialData.mean_similarity * 100).toFixed(1)}%</strong>
-                            </p>
-                            {adversarialData.fragile_attacks?.length > 0 && (
-                              <div className="flex gap-1 flex-wrap">
-                                {adversarialData.fragile_attacks.map((a: string) => (
-                                  <Badge key={a} variant="outline" className="text-xs text-red-600 border-red-200">{a}</Badge>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              );
-            })
+            <ResultCard
+              variant={variant}
+              taskId={id}
+              onEvalMetrics={(text) => evalMetrics.mutate(text)}
+              onEvalAdversarial={(text) => evalAdversarial.mutate(text)}
+              evalMetricsPending={evalMetrics.isPending}
+              evalAdversarialPending={evalAdversarial.isPending}
+              metricsData={qc.getQueryData<EvalMetrics>(["eval-metrics", variant.rewritten_text])}
+              adversarialData={qc.getQueryData<AdversarialResult>(["eval-adversarial", variant.rewritten_text])}
+            />
           )}
+
+          {/* Refinement */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Переделать с учётом:</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Textarea
+                placeholder="Например: сделай текст более сжатым, убери канцеляризмы, добавь больше конкретики..."
+                value={refinement}
+                onChange={(e) => setRefinement(e.target.value)}
+                rows={3}
+                className="resize-none"
+              />
+              <div className="flex justify-end">
+                <Button
+                  onClick={handleRefinement}
+                  loading={runTask.isPending}
+                  disabled={isActive}
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  Переписать заново
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
     </div>
+  );
+}
+
+function ResultCard({
+  variant,
+  taskId: _taskId,
+  onEvalMetrics,
+  onEvalAdversarial,
+  evalMetricsPending,
+  evalAdversarialPending,
+  metricsData,
+  adversarialData,
+}: {
+  variant: Variant;
+  taskId: string;
+  onEvalMetrics: (text: string) => void;
+  onEvalAdversarial: (text: string) => void;
+  evalMetricsPending: boolean;
+  evalAdversarialPending: boolean;
+  metricsData?: EvalMetrics;
+  adversarialData?: AdversarialResult;
+}) {
+  return (
+    <Card>
+      <CardContent className="p-4 space-y-4">
+        <div className="flex items-center gap-2 flex-wrap">
+          {variant.review_status && (
+            <Badge variant="outline" className="text-xs">{variant.review_status}</Badge>
+          )}
+          {variant.scores?.semantic_similarity != null && (
+            <span className="text-xs text-slate-500">
+              Sim: <strong>{(variant.scores.semantic_similarity * 100).toFixed(0)}%</strong>
+            </span>
+          )}
+          {variant.scores?.ai_score != null && (
+            <span className="text-xs text-slate-500">
+              AI: <strong>{(variant.scores.ai_score * 100).toFixed(0)}%</strong>
+            </span>
+          )}
+        </div>
+
+        <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
+          {variant.rewritten_text}
+        </p>
+
+        {/* Evaluation actions */}
+        <div className="flex gap-2 flex-wrap border-t border-slate-100 pt-3">
+          <Button
+            size="sm"
+            variant="outline"
+            loading={evalMetricsPending}
+            onClick={() => onEvalMetrics(variant.rewritten_text)}
+          >
+            <BarChart2 className="h-4 w-4" /> Метрики
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            loading={evalAdversarialPending}
+            onClick={() => onEvalAdversarial(variant.rewritten_text)}
+          >
+            <Shield className="h-4 w-4" /> Adversarial
+          </Button>
+        </div>
+
+        {/* Metrics */}
+        {metricsData && (
+          <div className="rounded-lg border bg-slate-50 p-3 space-y-2">
+            <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Метрики</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {Object.entries(metricsData).map(([key, val]) =>
+                typeof val === "number" ? (
+                  <div key={key} className="text-center">
+                    <p className="text-lg font-bold text-slate-800">{(val * 100).toFixed(1)}<span className="text-xs">%</span></p>
+                    <p className="text-xs text-slate-500">{key.replace(/_/g, " ")}</p>
+                  </div>
+                ) : null
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Adversarial */}
+        {adversarialData && (
+          <div className="rounded-lg border bg-slate-50 p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Adversarial тест</p>
+              <Badge className={adversarialData.passed ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}>
+                {adversarialData.passed ? "Пройден" : "Провален"}
+              </Badge>
+            </div>
+            <p className="text-xs text-slate-500">
+              Средняя схожесть: <strong>{(adversarialData.mean_similarity * 100).toFixed(1)}%</strong>
+            </p>
+            {adversarialData.fragile_attacks?.length > 0 && (
+              <div className="flex gap-1 flex-wrap">
+                {adversarialData.fragile_attacks.map((a: string) => (
+                  <Badge key={a} variant="outline" className="text-xs text-red-600 border-red-200">{a}</Badge>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -277,9 +307,7 @@ interface Variant {
   scores?: { semantic_similarity?: number; ai_score?: number; fluency?: number };
 }
 
-interface EvalMetrics {
-  [key: string]: number | string;
-}
+interface EvalMetrics { [key: string]: number | string; }
 
 interface AdversarialResult {
   passed: boolean;

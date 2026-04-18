@@ -20,6 +20,10 @@ class RewriteTaskCreate(BaseModel):
     input_constraints: dict[str, Any] | None = None
 
 
+class RewriteRunRequest(BaseModel):
+    user_instruction: str | None = None
+
+
 class RewriteTaskRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

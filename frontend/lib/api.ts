@@ -87,7 +87,8 @@ export const rewriteApi = {
     api.post("/rewrite", data).then((r) => r.data),
   get: (id: string) => api.get(`/rewrite/${id}`).then((r) => r.data),
   list: () => api.get("/rewrite").then((r) => r.data),
-  run: (id: string) => api.post(`/rewrite/${id}/run`).then((r) => r.data),
+  run: (id: string, body?: { user_instruction?: string }) =>
+    api.post(`/rewrite/${id}/run`, body ?? {}).then((r) => r.data),
   variants: (id: string) =>
     api.get(`/rewrite/${id}/variants`).then((r) => r.data),
   semanticContract: (id: string) =>
