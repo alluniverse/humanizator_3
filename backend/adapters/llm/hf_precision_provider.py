@@ -17,9 +17,12 @@ Graceful fallback:
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from adapters.llm.base import LLMProvider
+
+logger = logging.getLogger(__name__)
 
 
 class HFPrecisionProvider(LLMProvider):
@@ -61,13 +64,35 @@ class HFPrecisionProvider(LLMProvider):
 
         from infrastructure.config import settings
         _hf_token = getattr(settings, "hf_token", None)
+        _load_in_4bit = getattr(settings, "precision_model_load_in_4bit", False)
 
         self._tokenizer = AutoTokenizer.from_pretrained(model_name, token=_hf_token)
-        self._model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype=_torch.float16 if "cuda" in device else _torch.float32,
-            token=_hf_token,
-        ).to(device).eval()
+
+        load_kwargs: dict = {"token": _hf_token}
+        if _load_in_4bit:
+            try:
+                from transformers import BitsAndBytesConfig
+                load_kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=_torch.float16,
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_quant_type="nf4",
+                )
+                load_kwargs["device_map"] = "auto"
+                logger.info("Loading %s in 4-bit (NF4) quantization", model_name)
+            except ImportError:
+                logger.warning(
+                    "bitsandbytes not installed — falling back to float16. "
+                    "Install with: pip install bitsandbytes accelerate"
+                )
+                load_kwargs["torch_dtype"] = _torch.float16 if "cuda" in device else _torch.float32
+        else:
+            load_kwargs["torch_dtype"] = _torch.float16 if "cuda" in device else _torch.float32
+
+        if "device_map" not in load_kwargs:
+            self._model = AutoModelForCausalLM.from_pretrained(model_name, **load_kwargs).to(device).eval()
+        else:
+            self._model = AutoModelForCausalLM.from_pretrained(model_name, **load_kwargs).eval()
 
         if self._tokenizer.pad_token is None:
             self._tokenizer.pad_token = self._tokenizer.eos_token

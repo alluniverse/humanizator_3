@@ -55,14 +55,21 @@ class Settings(BaseSettings):
     # Algorithm 1 (Cheng et al. 2025 arXiv:2506.07001v1) — Adversarial Paraphrasing
     #
     # Paraphraser LLM — requires AutoModelForCausalLM with logit access.
-    # Paper uses LLaMA-3-8B-Instruct; gpt2 is the dev/testing fallback (low quality).
-    # Recommended production value: meta-llama/Meta-Llama-3-8B-Instruct
+    # Paper uses LLaMA-3-8B-Instruct (needs 16 GB VRAM / 32 GB RAM).
+    # For ≤6 GB VRAM: use Qwen/Qwen2.5-3B-Instruct with precision_model_load_in_4bit=true (~1.5 GB).
+    # For ≤4 GB VRAM: use Qwen/Qwen2.5-1.5B-Instruct with 4-bit (~0.9 GB).
+    # gpt2 is the dev/testing fallback only (very low paraphrase quality).
     precision_model: str = "gpt2"
     #
+    # Load paraphraser in 4-bit quantization (bitsandbytes required).
+    # Cuts VRAM ~4x with minor quality loss. Required for consumer GPUs (≤8 GB VRAM).
+    # Install: pip install bitsandbytes accelerate
+    precision_model_load_in_4bit: bool = False
+    #
     # Guidance detector D — trained AI-text classifier, lower output = more human-like.
-    # Paper uses openai-community/roberta-large-openai-detector.
-    # If unset, RobertaAIDetector will auto-load openai-community/roberta-base-openai-detector.
-    # Recommended: openai-community/roberta-large-openai-detector (1.4 GB, better accuracy)
+    # Paper uses openai-community/roberta-large-openai-detector (1.4 GB VRAM).
+    # For constrained VRAM (<1 GB free): use openai-community/roberta-base-openai-detector (0.5 GB).
+    # If unset, RobertaAIDetector will auto-load roberta-base-openai-detector.
     ai_detector_model: str | None = None
 
     @field_validator("log_level")
