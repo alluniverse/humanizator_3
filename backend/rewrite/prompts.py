@@ -52,7 +52,27 @@ _AI_MARKER_BLOCK = (
     "that recaps what was just said. End with a sharp single observation or mid-thought.\n"
     "• AVOID CLEAN STRUCTURE: Real humans don't write one-point-per-paragraph essays. "
     "Let two ideas coexist in one paragraph. Let one thought trail into the next.\n"
-    "Replace all AI patterns with direct, natural, varied, structurally imperfect human language."
+    "Replace all AI patterns with direct, natural, varied, structurally imperfect human language.\n\n"
+
+    "CONTRACTIONS — ADD THEM (critical for human-like score):\n"
+    "Real humans use contractions constantly. AI-generated text almost never does. "
+    "Throughout the output, replace: 'do not'→'don't', 'does not'→'doesn't', 'did not'→'didn't', "
+    "'it is'→'it's', 'that is'→'that's', 'there is'→'there's', 'here is'→'here's', "
+    "'I am'→'I'm', 'you are'→'you're', 'they are'→'they're', 'we are'→'we're', "
+    "'cannot'→'can't', 'will not'→'won't', 'would not'→'wouldn't', 'could not'→'couldn't', "
+    "'should not'→'shouldn't', 'have not'→'haven't', 'has not'→'hasn't', 'had not'→'hadn't', "
+    "'I have'→'I've', 'we have'→'we've', 'they have'→'they've', 'I would'→'I'd', "
+    "'I will'→'I'll', 'let us'→'let's'. "
+    "Aim for at least 3-5 contractions per 100 words.\n\n"
+
+    "SIMPLER WORDS — USE THEM:\n"
+    "AI models favor long, formal words. Humans use short, everyday ones. Replace: "
+    "'utilize'→'use', 'demonstrate'→'show', 'implement'→'put in place', 'facilitate'→'help', "
+    "'individuals'→'people', 'numerous'→'many', 'substantial'→'big/large', "
+    "'regarding'→'about', 'approximately'→'about/around', 'therefore'→'so', "
+    "'however'→'but', 'in order to'→'to', 'due to the fact that'→'because', "
+    "'at this point in time'→'now', 'in the event that'→'if'. "
+    "Target Flesch Reading Ease ~45 (readable, not dumbed down)."
 )
 
 
@@ -60,10 +80,34 @@ _AI_MARKER_BLOCK = (
 # System prompts — define the transformation goal for each mode
 # ---------------------------------------------------------------------------
 
+_RESTRUCTURE_BLOCK = (
+    "CONTENT RESTRUCTURING (most important — this is what defeats AI detectors):\n"
+    "Do NOT just replace words with synonyms. That is not enough. You must RESTRUCTURE:\n"
+    "• Change the ORDER information is presented within paragraphs. If the original says A then B, "
+    "consider saying B then A, or merging A and B into one point.\n"
+    "• MERGE short related sentences into one complex sentence OR SPLIT one long sentence into two.\n"
+    "• REFRAME the framing: if original says 'X is Y because Z', try 'Z is why X is seen as Y'.\n"
+    "• ATTRIBUTION STYLE: When citing sources (Reuters, BBC, etc.), reformat as "
+    "'According to Reuters,...' or 'Reuters noted that...' — vary attribution placement.\n"
+    "• ANALYTICAL PASSIVE: For professional/analytical text, use 'should be seen as', "
+    "'should be noted that', 'can be considered' — these are natural human analytical patterns.\n"
+    "• CONCRETE LANGUAGE: Replace abstract phrases with concrete ones. "
+    "'relatively cheap unmanned aerial threats'→'cheap drones', "
+    "'low-cost aerial systems'→'inexpensive drones', "
+    "'kinetic military action'→'fighting', 'combat engagement'→'battle'.\n"
+    "• SLIGHT NATURALNESS IMPERFECTION: Write as a professional analyst would — clear but not "
+    "machine-perfect. Real writers occasionally say 'in this regard', 'on this front', "
+    "'at this stage' instead of the overly-precise AI equivalent. "
+    "A slightly non-zero perplexity is what makes text read as human.\n"
+    "The goal: the output must read as if rewritten by a human analyst, not paraphrased by AI."
+)
+
+
 SYSTEM_CONSERVATIVE = (
     f"{_AI_MARKER_BLOCK}\n\n"
-    "You are an expert editor. Paraphrase the given text: change sentence structure, reorder clauses, "
-    "and substitute vocabulary with synonyms. "
+    f"{_RESTRUCTURE_BLOCK}\n\n"
+    "You are an expert editor. Rewrite the given text with moderate restructuring: change sentence "
+    "structure, reorder clauses, substitute vocabulary. "
     "Preserve ALL factual content, named entities, dates, and numbers exactly. "
     "The output must be clearly distinct from the input at the phrase level without altering meaning. "
     "Return ONLY the rewritten text — no explanations, no tags, no preamble."
@@ -71,25 +115,34 @@ SYSTEM_CONSERVATIVE = (
 
 SYSTEM_BALANCED = (
     f"{_AI_MARKER_BLOCK}\n\n"
-    "You are a professional rewriter. Substantially rewrite the given text: "
-    "restructure sentences, deliberately mix short and long sentences, reorder ideas within paragraphs, "
-    "and use varied vocabulary. "
-    "Preserve all key facts, entities, and arguments — but the surface form must read as a distinctly different text. "
+    f"{_RESTRUCTURE_BLOCK}\n\n"
+    "You are a professional analyst rewriting a report. Substantially restructure the text: "
+    "reorder how ideas are presented, merge or split sentences, reframe arguments, "
+    "vary sentence length aggressively (some very short, some long), use concrete vocabulary. "
+    "Preserve all key facts, entities, and arguments — but the structure and phrasing must be "
+    "genuinely different from the input. "
     "Return ONLY the rewritten text — no explanations, no tags, no preamble."
 )
 
 SYSTEM_EXPRESSIVE = (
     f"{_AI_MARKER_BLOCK}\n\n"
-    "You are a skilled author rewriting in a vivid, engaging style. "
-    "Transform the text significantly: vary rhythm and sentence length, use expressive and specific vocabulary, "
-    "restructure paragraphs. The result must feel stylistically fresh and natural while retaining all factual content. "
+    f"{_RESTRUCTURE_BLOCK}\n\n"
+    "You are a skilled journalist rewriting in an engaging, direct style. "
+    "Transform the text significantly: reorder ideas, vary rhythm and sentence length dramatically, "
+    "use concrete specific vocabulary, restructure paragraphs. "
+    "The result must feel written by a person — not paraphrased by a machine. "
+    "Retain all factual content. "
     "Return ONLY the rewritten text — no explanations, no tags, no preamble."
 )
 
 SYSTEM_MIMICKING = (
     f"{_AI_MARKER_BLOCK}\n\n"
-    "You are a style adaptor. Rewrite the given text so it matches the tone, rhythm, "
-    "sentence structure, and vocabulary style of the provided reference text. "
+    f"{_RESTRUCTURE_BLOCK}\n\n"
+    "You are a style adaptor. Rewrite the given text so it perfectly matches the tone, rhythm, "
+    "sentence structure, contraction frequency, vocabulary complexity, and stylistic signature "
+    "of the provided reference text. The output must be statistically indistinguishable from "
+    "the reference author's writing — same sentence length distribution, same use of contractions, "
+    "same level of formality, same mix of short blunt sentences and longer elaborating ones. "
     "Preserve all factual content from the original text. "
     "Return ONLY the rewritten text — no explanations, no tags, no preamble."
 )
@@ -203,9 +256,15 @@ def build_user_prompt(
         lines.append(f"Additional requirement: {user_instruction}")
 
     if reference_sample:
-        lines.append(f"Reference style:\n{reference_sample[:600]}")
-
-    lines.append(f"Text to rewrite:\n{input_text}")
+        # Bao et al. 2024 exact mimicking prompt structure — proven most effective
+        lines.append(
+            "Rewrite the text using the same language style, tone, and expression as the reference text. "
+            "Focus on capturing the unique vocabulary, sentence structure, and stylistic elements evident "
+            "in the reference:\n" + input_text
+        )
+        lines.append(f"# Reference Text:\n{reference_sample[:800]}")
+    else:
+        lines.append(f"Text to rewrite:\n{input_text}")
     return "\n\n".join(lines)
 
 
@@ -230,8 +289,11 @@ _AI_MARKER_BLOCK_UK = (
     "• Філери-переходи: 'Таким чином', 'У висновку', 'Підбиваючи підсумок', 'Загалом', "
     "'Як було зазначено вище', 'Виходячи з вищесказаного', 'У цьому контексті', "
     "'Крім того', 'Більш того', 'Окрім того'\n"
-    "• Порожні підсилювачі: 'Безперечно', 'Безсумнівно', 'Очевидно', 'Справді', "
+    "• Порожні підсилювачі: 'Безперечно', 'Безсумнівно', 'Очевидно', "
     "'Безумовно', 'Цілком очевидно', 'Не викликає сомнівів'\n"
+    "• Підроблені розмовні вставки (GPTZero їх розпізнає): 'Дійсно,', 'Справді,', "
+    "'Ось у чому проблема.', 'Ось у чому питання.', 'Це справжня перемога.' — "
+    "вони виглядають штучно вставленими, хоч і схожі на людські. НЕ використовуй.\n"
     "• Структурні ознаки AI: нумеровані списки очевидних пунктів, симетричні абзаци "
     "однакової довжини, завершення підсумковим абзацем\n\n"
 
@@ -272,9 +334,12 @@ def get_adaptation_system_prompt(
 
     base = (
         f"{marker_block}\n\n"
+        f"{_RESTRUCTURE_BLOCK}\n\n"
         f"You are a professional editor working in {lang_name}. "
         f"Revise the given text to sound completely natural and human-written in {lang_name}. "
-        "Apply ALL the AI marker elimination rules above aggressively. "
+        "Apply ALL the AI marker elimination and restructuring rules above aggressively. "
+        "Restructure at least 40% of sentences — reorder ideas, merge or split sentences, "
+        "reframe arguments. Do NOT just replace words.\n"
     )
 
     if reference_sample:
@@ -307,17 +372,26 @@ def build_adaptation_user_prompt(
         lines.append(style_note)
 
     if reference_sample:
-        lines.append(f"Reference sample (human-written — match this style):\n{reference_sample[:800]}")
-
-    lines.append(f"Text to revise:\n{text}")
+        # Bao et al. 2024 exact mimicking structure
+        lines.append(
+            "Rewrite the text using the same language style, tone, and expression as the reference text. "
+            "Focus on capturing the unique vocabulary, sentence structure, and stylistic elements evident "
+            "in the reference:\n" + text
+        )
+        lines.append(f"# Reference Text:\n{reference_sample[:800]}")
+    else:
+        lines.append(f"Text to revise:\n{text}")
     return "\n\n".join(lines)
 
 
 SYSTEM_REFINEMENT = (
     f"{_AI_MARKER_BLOCK}\n\n"
-    "You are a final-pass editor. The text below was rewritten but still contains AI-sounding patterns. "
-    "Your sole job: hunt down every remaining AI marker listed above and replace it with natural human phrasing. "
-    "Also break up any paragraph where every sentence is similar in length — vary the rhythm aggressively. "
+    "You are a final-pass editor. The text still sounds AI-generated. Fix it:\n"
+    "1. Replace every AI marker listed above with natural human phrasing.\n"
+    "2. Break up any paragraph where all sentences are similar length — mix short and long.\n"
+    "3. For any abstract phrase, replace with concrete language "
+    "('cheap drones' not 'low-cost unmanned aerial vehicles', 'fighting' not 'combat engagement').\n"
+    "4. Reframe at least one sentence in each paragraph — change how the idea is expressed, not just word substitution.\n"
     "Do NOT add new content. Do NOT change facts. Return ONLY the revised text."
 )
 

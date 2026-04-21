@@ -30,10 +30,20 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/0"
 
-    # LLM Providers
+    # LLM Providers — OpenAI
     openai_api_key: str | None = None
     openai_base_url: str | None = None
     openai_model: str = "gpt-4o"
+
+    # LLM Providers — OpenRouter (optional, overrides OpenAI for rewrite tasks when set)
+    # Get key at https://openrouter.ai/keys
+    # Recommended models (different distribution → harder for GPTZero to detect):
+    #   mistralai/mixtral-8x7b-instruct       — best quality
+    #   mistralai/mistral-7b-instruct:free     — free
+    #   meta-llama/llama-3.1-8b-instruct:free  — free
+    #   qwen/qwen-2.5-72b-instruct             — very different (Chinese model)
+    openrouter_api_key: str | None = None
+    openrouter_model: str = "mistralai/mixtral-8x7b-instruct"
 
     # Auth
     jwt_secret_key: str = "change-me-in-production-use-strong-random-secret"
@@ -85,9 +95,9 @@ class Settings(BaseSettings):
             raise ValueError(f"log_level must be one of {allowed}")
         return upper
 
-    @field_validator("openai_api_key", "openai_base_url", mode="before")
+    @field_validator("openai_api_key", "openai_base_url", "openrouter_api_key", mode="before")
     @classmethod
-    def _blank_openai_values_to_none(cls, value: str | None) -> str | None:
+    def _blank_str_to_none(cls, value: str | None) -> str | None:
         if isinstance(value, str) and not value.strip():
             return None
         return value

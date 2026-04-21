@@ -100,13 +100,15 @@ def _get_tenant_id(request: Request, api_key: str | None) -> str:
 
 
 async def _get_tenant_quota(tenant_id: str) -> dict[str, int]:
-    """Look up quota tier for tenant. Falls back to 'free' tier."""
+    """Look up quota tier for tenant. Falls back to 'unlimited' in dev, 'free' in prod."""
+    from infrastructure.config import settings
+    default_tier = "unlimited" if settings.app_env == "development" else "free"
     try:
         tier_key = f"tenant_tier:{tenant_id}"
         tier = await redis_cache.client.get(tier_key)
-        return QUOTA_TIERS.get(tier or "free", QUOTA_TIERS["free"])
+        return QUOTA_TIERS.get(tier or default_tier, QUOTA_TIERS[default_tier])
     except Exception:
-        return QUOTA_TIERS["free"]
+        return QUOTA_TIERS[default_tier]
 
 
 # ---------------------------------------------------------------------------

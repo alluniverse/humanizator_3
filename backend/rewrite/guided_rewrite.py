@@ -11,7 +11,8 @@ import logging
 import re
 from typing import Any
 
-from adapters.llm import LLMProvider, OpenAIProvider
+from adapters.llm import LLMProvider, get_default_provider
+from rewrite.multilingual_chain import apply_chain, CHAIN_ZH_JA as CHAIN_ZH
 from rewrite.prompts import (
     PRECISION_SYSTEM_PROMPT,
     build_precision_prompt,
@@ -37,7 +38,7 @@ class GuidedRewriteEngine:
     """
 
     def __init__(self, provider: LLMProvider | None = None) -> None:
-        self._provider = provider or OpenAIProvider()
+        self._provider = provider or get_default_provider()
 
     async def rewrite(
         self,
@@ -48,21 +49,38 @@ class GuidedRewriteEngine:
         reference_samples: list[str] | None = None,
         user_instruction: str | None = None,
     ) -> dict[str, Any]:
-        """Generate a single rewrite variant (direct, chunk-level, precision, or best_of_n)."""
+        """Generate a single rewrite variant.
+
+        Pipeline order (chain-first):
+          1. EN→ZH→EN chain on the *original* text — breaks GPT-4o syntactic patterns
+             before the LLM ever sees the input.
+          2. LLM rewrite of the chain output — the LLM now works with already-
+             restructured text, so it cannot reproduce the original distribution.
+        """
         if mode == "precision":
             return await self._rewrite_precision(text, style_profile, contract, reference_samples)
+
+        # Step 1 — chain-first: restructure the original before the LLM rewrites it.
+        chained_text = await self._chain_text(text)
+
         if mode == "best_of_n":
-            return await self._rewrite_best_of_n(
-                text, style_profile, contract, reference_samples, user_instruction
+            result = await self._rewrite_best_of_n(
+                chained_text, style_profile, contract, reference_samples, user_instruction
             )
-        word_count = len(text.split())
+            result["multilingual_chain"] = "zh"
+            return result
+
+        word_count = len(chained_text.split())
         if word_count > CHUNK_THRESHOLD_WORDS:
-            return await self._rewrite_chunked(
-                text, mode, style_profile, contract, reference_samples, user_instruction
+            result = await self._rewrite_chunked(
+                chained_text, mode, style_profile, contract, reference_samples, user_instruction
             )
-        return await self._rewrite_direct(
-            text, mode, style_profile, contract, reference_samples, user_instruction
-        )
+        else:
+            result = await self._rewrite_direct(
+                chained_text, mode, style_profile, contract, reference_samples, user_instruction
+            )
+        result["multilingual_chain"] = "zh"
+        return result
 
     async def rewrite_all_modes(
         self,
@@ -238,6 +256,33 @@ class GuidedRewriteEngine:
                 for k, v in ref_response.get("usage", {}).items():
                     total_usage[k] = total_usage.get(k, 0) + v
 
+        # Contraction pass: AI generates ~0 contractions; humans use ~1.7 per 100 words.
+        # This is the #1 statistical differentiator. If output has none, force a pass.
+        if self._needs_contraction_pass(result_text):
+            contraction_system = (
+                "You are a style editor. Your ONLY job: add natural contractions to the text. "
+                "Replace: 'do not'→'don't', 'does not'→'doesn't', 'did not'→'didn't', "
+                "'it is'→'it's' (when not emphatic), 'that is'→'that's', 'there is'→'there's', "
+                "'cannot'→'can't', 'will not'→'won't', 'would not'→'wouldn't', "
+                "'could not'→'couldn't', 'should not'→'shouldn't', 'have not'→'haven't', "
+                "'has not'→'hasn't', 'I am'→'I'm', 'you are'→'you're', 'they are'→'they're'. "
+                "Make NO other changes — do not rewrite, do not add/remove sentences. "
+                "Return ONLY the text with contractions added."
+            )
+            cont_response = await self._provider.generate(
+                result_text,
+                system_prompt=contraction_system,
+                temperature=0.3,
+            )
+            if cont_response.get("text", "").strip():
+                result_text = cont_response["text"]
+                for k, v in cont_response.get("usage", {}).items():
+                    total_usage[k] = total_usage.get(k, 0) + v
+            logger.info(
+                "contraction_pass applied — ratio before: ~0, after: %.2f/100w",
+                self._contraction_ratio(result_text),
+            )
+
         return {
             "mode": mode,
             "text": result_text,
@@ -262,6 +307,28 @@ class GuidedRewriteEngine:
     def _has_ai_markers(self, text: str) -> bool:
         lower = text.lower()
         return any(marker in lower for marker in self._AI_MARKER_PATTERNS)
+
+    _CONTRACTION_PAIRS = [
+        ("do not", "don't"), ("does not", "doesn't"), ("did not", "didn't"),
+        ("it is", "it's"), ("that is", "that's"), ("there is", "there's"),
+        ("here is", "here's"), ("I am", "I'm"), ("you are", "you're"),
+        ("they are", "they're"), ("we are", "we're"), ("cannot", "can't"),
+        ("will not", "won't"), ("would not", "wouldn't"), ("could not", "couldn't"),
+        ("should not", "shouldn't"), ("have not", "haven't"), ("has not", "hasn't"),
+        ("had not", "hadn't"), ("I have", "I've"), ("we have", "we've"),
+        ("they have", "they've"),
+    ]
+
+    def _contraction_ratio(self, text: str) -> float:
+        """Contractions per 100 words. Human ~1.7, AI ~0.0."""
+        words = text.split()
+        if not words:
+            return 0.0
+        count = sum(1 for w in words if "'" in w and len(w) > 2)
+        return count / len(words) * 100
+
+    def _needs_contraction_pass(self, text: str) -> bool:
+        return self._contraction_ratio(text) < 0.5 and len(text.split()) > 40
 
     # ------------------------------------------------------------------
     # Chunk-level rewrite (T5.5)
@@ -383,6 +450,23 @@ class GuidedRewriteEngine:
     def _reassemble_chunks(self, chunks: list[str]) -> str:
         """Join chunks with paragraph separators."""
         return "\n\n".join(c.strip() for c in chunks if c.strip())
+
+    async def _chain_text(self, text: str) -> str:
+        """Apply EN→ZH→EN to input text, return restructured version.
+
+        Falls back silently to original if translation fails.
+        """
+        try:
+            result = await apply_chain(text, CHAIN_ZH)
+            if result and result.strip():
+                logger.info(
+                    "chain EN→ZH→EN: %d→%d words",
+                    len(text.split()), len(result.split()),
+                )
+                return result
+        except Exception as exc:
+            logger.warning("chain failed: %s — using original", exc)
+        return text
 
     def _temperature_for_mode(self, mode: str) -> float:
         return {"conservative": 0.75, "balanced": 0.90, "expressive": 1.05}.get(mode, 0.90)

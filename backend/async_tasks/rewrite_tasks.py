@@ -46,10 +46,23 @@ async def _run_stage(coro, task_id: str, stage: str) -> dict[str, Any]:
 
 
 def _strip_hidden_chars(text: str) -> str:
-    """Remove hidden/control Unicode characters that may come from copy-paste sources."""
-    text = text.lstrip('\ufeff')
-    text = re.sub(r'[\u200b\u200c\u200d\u200e\u200f\u00ad\ufeff\u2028\u2029]', '', text)
+    """Remove hidden/steganographic Unicode characters used for AI watermarking."""
+    # NFKC normalization: converts math bold/italic Unicode variants → ASCII,
+    # smart quotes → straight quotes, ligatures → base chars, etc.
+    # This defeats watermarks embedded via Unicode compatibility equivalents.
+    text = unicodedata.normalize('NFKC', text)
+    # BOM + zero-width / directional markers
+    text = re.sub(
+        r'[\u200b\u200c\u200d\u200e\u200f\u00ad\ufeff\u2028\u2029'
+        r'\u2060\u2061\u2062\u2063\u2064'   # word joiners, invisible operators
+        r'\u180b\u180c\u180d'               # Mongolian free variation selectors
+        r'\ufe00-\ufe0f]',                  # variation selectors VS1-VS16
+        '', text,
+    )
+    # Tag characters block U+E0000-U+E007F (used for steganographic watermarking)
+    text = re.sub(r'[\U000e0000-\U000e007f]', '', text)
     text = text.replace('\u00a0', ' ')
+    # Strip all remaining Unicode control characters except normal whitespace
     text = ''.join(ch for ch in text if unicodedata.category(ch)[0] != 'C' or ch in '\n\t\r')
     return text
 
@@ -88,8 +101,15 @@ def stage_analyze(self, task_id: str) -> dict[str, Any]:
 
 @celery_app.task(bind=True, max_retries=2, default_retry_delay=15)
 def stage_rewrite(self, context: dict[str, Any]) -> dict[str, Any]:
-    """Stage 2: Generate rewrite variants."""
+    """Stage 2: Generate rewrite variants.
+
+    Skipped for same-language humanization (e.g. UK→UK): the input is already
+    in the target language so English rewrite stages add no value.
+    """
     task_id = context["task_id"]
+    if context.get("same_lang_mode"):
+        logger.info("[rewrite] skipped — same_lang_mode task=%s", task_id)
+        return context
     logger.info("[rewrite] task=%s", task_id)
     try:
         return _run_async(_run_stage(_do_rewrite(context), task_id, "rewrite"))
@@ -102,6 +122,9 @@ def stage_rewrite(self, context: dict[str, Any]) -> dict[str, Any]:
 def stage_evaluate(self, context: dict[str, Any]) -> dict[str, Any]:
     """Stage 3: Evaluate and rank variants."""
     task_id = context["task_id"]
+    if context.get("same_lang_mode"):
+        logger.info("[evaluate] skipped — same_lang_mode task=%s", task_id)
+        return context
     logger.info("[evaluate] task=%s", task_id)
     try:
         return _run_async(_run_stage(_do_evaluate(context), task_id, "evaluate"))
@@ -114,7 +137,10 @@ def stage_evaluate(self, context: dict[str, Any]) -> dict[str, Any]:
 def stage_translate(self, context: dict[str, Any]) -> dict[str, Any]:
     """Stage 4a (optional): Translate rewritten text to target language."""
     task_id = context["task_id"]
-    if not context.get("translation_target"):
+    if not context.get("translation_target") and not context.get("same_lang_mode"):
+        return context
+    if context.get("same_lang_mode"):
+        logger.info("[translate] skipped — same_lang_mode task=%s", task_id)
         return context
     logger.info("[translate] task=%s target=%s", task_id, context["translation_target"])
     try:
@@ -126,13 +152,22 @@ def stage_translate(self, context: dict[str, Any]) -> dict[str, Any]:
 
 @celery_app.task(bind=True, max_retries=2, default_retry_delay=15)
 def stage_adapt(self, context: dict[str, Any]) -> dict[str, Any]:
-    """Stage 4b (optional): Adapt/humanize translated text."""
+    """Stage 4b: Direct rewrite to target language, or same-language humanization."""
     task_id = context["task_id"]
-    if not context.get("translation_target") or not context.get("translation_result"):
+    if context.get("same_lang_mode"):
+        logger.info("[adapt] same_lang_mode task=%s", task_id)
+        try:
+            return _run_async(_run_stage(_do_humanize_same_lang(context), task_id, "adapt"))
+        except Exception as exc:
+            logger.exception("[adapt] same_lang failed task=%s", task_id)
+            raise self.retry(exc=exc)
+    if not context.get("translation_target"):
         return context
+    # translation_result may be absent if stage_translate was skipped —
+    # _do_direct_rewrite handles this by working from the EN variants directly.
     logger.info("[adapt] task=%s", task_id)
     try:
-        return _run_async(_run_stage(_do_adapt(context), task_id, "adapt"))
+        return _run_async(_run_stage(_do_direct_rewrite(context), task_id, "adapt"))
     except Exception as exc:
         logger.exception("[adapt] failed task=%s", task_id)
         raise self.retry(exc=exc)
@@ -228,6 +263,10 @@ async def _do_analyze(task_id: str) -> dict[str, Any]:
         logger.warning("Word importance scoring failed: %s", exc)
         importance_scores = []
 
+    # same_lang_mode: input is already in the library/target language (e.g. UK→UK).
+    # Skip EN rewrite stages and go straight to humanization in that language.
+    same_lang_mode = (not translation_target) and (language not in ("en", "ru"))
+
     return {
         "task_id": task_id,
         "language": language,
@@ -239,6 +278,7 @@ async def _do_analyze(task_id: str) -> dict[str, Any]:
         "rewrite_mode": rewrite_mode,
         "user_instruction": user_instruction,
         "translation_target": translation_target,
+        "same_lang_mode": same_lang_mode,
     }
 
 
@@ -375,32 +415,301 @@ async def _do_evaluate(context: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _do_translate(context: dict[str, Any]) -> dict[str, Any]:
-    from adapters.llm import OpenAIProvider
-    from rewrite.prompts import get_translation_system_prompt
+    """Legacy: kept for pipeline compatibility — direct rewrite now handled in stage_adapt."""
+    return context
+
+
+def _protect_proper_nouns(text: str) -> tuple[str, dict[str, str]]:
+    """Replace proper nouns and named entities with stable placeholders.
+
+    Protects: English words/phrases in Ukrainian text, sequences of Title-case
+    words, known brand/org patterns. Returns (protected_text, placeholder_map).
+    """
+    placeholders: dict[str, str] = {}
+    counter = [0]
+
+    def _ph() -> str:
+        token = f"⟨P{counter[0]}⟩"
+        counter[0] += 1
+        return token
+
+    # English words / mixed Latin sequences (e.g. "Castle Mills", "York BID")
+    def _replace_latin(m: re.Match) -> str:
+        val = m.group(0)
+        ph = _ph()
+        placeholders[ph] = val
+        return ph
+
+    protected = re.sub(r'[A-Za-z][A-Za-z0-9\s\-&\']*[A-Za-z0-9](?:\s+[A-Za-z][A-Za-z0-9\-&\']*)*', _replace_latin, text)
+
+    # Ukrainian Title-Case sequences (≥2 consecutive capitalised words not at sentence start)
+    # e.g. "Роб Стотерт", "Йорк BID"
+    def _replace_uk_proper(m: re.Match) -> str:
+        val = m.group(0)
+        ph = _ph()
+        placeholders[ph] = val
+        return ph
+
+    # Two or more Ukrainian capitalised tokens in a row
+    protected = re.sub(
+        r'(?<![.!?\n])\b([А-ЯЇІЄІ][а-яїієі\']+(?:\s+[А-ЯЇІЄІ][а-яїієі\']+)+)',
+        _replace_uk_proper,
+        protected,
+    )
+
+    return protected, placeholders
+
+
+def _restore_proper_nouns(text: str, placeholders: dict[str, str]) -> str:
+    """Restore placeholders back to original proper nouns."""
+    for ph, val in placeholders.items():
+        text = text.replace(ph, val)
+    # Clean up any leftover malformed placeholders
+    text = re.sub(r'⟨P\d+⟩', '', text)
+    return text
+
+
+async def _do_humanize_same_lang(context: dict[str, Any]) -> dict[str, Any]:
+    """Humanize text that is already in the target language (e.g. UK→UK).
+
+    Steps:
+      1. Load library samples + extract style elements.
+      2. Protect proper nouns with placeholders.
+      3. lang→zh-CN→lang chain to break LLM statistical patterns.
+      4. Restore proper nouns.
+      5. LLM polish pass with style injection — fix remaining AI markers,
+         inject human-like phrasing from the library.
+      6. Cleanup pass for chain artifacts.
+    """
+    from adapters.llm import get_default_provider
+    from application.services.ukrainian_extractor import build_style_injection, extract_style_elements
+    from infrastructure.db.models import RewriteTask, StyleSample
+    from infrastructure.db.session import AsyncSessionLocal
+    from rewrite.multilingual_chain import apply_chain
+    from rewrite.prompts import _AI_MARKER_BLOCK_UK, _RESTRUCTURE_BLOCK
+
+    task_id = context["task_id"]
+    lang = context["language"]  # "uk", "pl", etc.
+    original_text = context["original_text"]
+
+    lang_name = {"uk": "Ukrainian", "pl": "Polish", "de": "German", "fr": "French"}.get(lang, lang)
+
+    # ── 1. Load library samples ───────────────────────────────────────────
+    library_samples: list[str] = []
+    async with AsyncSessionLocal() as session:
+        task = await session.get(RewriteTask, task_id)
+        if task and task.library_id:
+            sample_result = await session.execute(
+                select(StyleSample)
+                .where(StyleSample.library_id == task.library_id)
+                .where(StyleSample.quality_tier == QualityTier.L1)
+                .limit(5)
+            )
+            samples = sample_result.scalars().all()
+            if not samples:
+                fb = await session.execute(
+                    select(StyleSample).where(StyleSample.library_id == task.library_id).limit(5)
+                )
+                samples = fb.scalars().all()
+            library_samples = [s.content for s in samples if s.content]
+
+    style_elements = extract_style_elements(library_samples) if library_samples else {}
+    style_injection = build_style_injection(style_elements) if style_elements else ""
+    best_reference = library_samples[0][:600] if library_samples else ""
+
+    # ── 2. Protect proper nouns, then chain ──────────────────────────────
+    protected_text, placeholders = _protect_proper_nouns(original_text)
+    chained_text = original_text
+    try:
+        chained_protected = await apply_chain(protected_text, ["zh-CN", lang], source_lang=lang)
+        if chained_protected and chained_protected.strip():
+            restored = _restore_proper_nouns(chained_protected, placeholders)
+            logger.info("[humanize] chain applied+restored: %d→%d words", len(original_text.split()), len(restored.split()))
+            chained_text = restored
+    except Exception as exc:
+        logger.warning("[humanize] chain failed: %s — using original", exc)
+
+    # ── 3. LLM polish with style injection ───────────────────────────────
+    provider = get_default_provider()
+
+    marker_block = _AI_MARKER_BLOCK_UK if lang == "uk" else ""
+    system = (
+        f"{marker_block}\n\n{_RESTRUCTURE_BLOCK}\n\n"
+        f"You are a native {lang_name} journalist and editor. "
+        f"The text below was written by AI and passed through machine translation — it may have awkward phrasing. "
+        f"Rewrite it so it reads as natural, human-written {lang_name}. "
+        f"Preserve all facts, names, dates, and numbers exactly. "
+        f"STRICT RULES:\n"
+        f"- Do NOT add sentences, questions, or commentary that were not in the original text.\n"
+        f"- Do NOT add rhetorical questions at the end.\n"
+        f"- Do NOT add 'engaging' conclusions — end where the original ended.\n"
+        f"- Preserve proper nouns (place names, personal names, brand names) exactly as given.\n"
+        f"Return ONLY the rewritten {lang_name} text."
+    )
+
+    user_parts: list[str] = []
+    if style_injection:
+        user_parts.append(style_injection)
+    if best_reference:
+        user_parts.append(
+            f"Rewrite using the same language style and tone as this reference "
+            f"(human-written {lang_name}):\n{chained_text}\n\n# Reference Text:\n{best_reference}"
+        )
+    else:
+        user_parts.append(f"Text to humanize in {lang_name}:\n{chained_text}")
+
+    user_prompt = "\n\n".join(user_parts)
+
+    try:
+        response = await provider.generate(user_prompt, system_prompt=system, temperature=0.85, max_tokens=2048)
+        humanized = response["text"]
+        if not humanized.strip():
+            raise ValueError("empty response")
+    except Exception as exc:
+        logger.warning("[humanize] LLM failed: %s — using chained text", exc)
+        humanized = chained_text
+
+    # ── 4. Cleanup pass ───────────────────────────────────────────────────
+    cleanup_system = (
+        f"You are a proofreader for {lang_name}. Fix ONLY:\n"
+        f"1. Machine translation artifacts (isolated conjunctions, awkward calques).\n"
+        f"2. Grammar errors (gender/number agreement).\n"
+        f"3. Broken or mistranslated proper nouns — restore them to match the ORIGINAL text:\n{original_text[:400]}\n"
+        f"Do NOT add new sentences. Do NOT add rhetorical questions. Return ONLY the fixed text."
+    )
+    try:
+        cleanup = await provider.generate(humanized, system_prompt=cleanup_system, temperature=0.15, max_tokens=2048)
+        if cleanup.get("text", "").strip():
+            humanized = cleanup["text"]
+    except Exception as exc:
+        logger.warning("[humanize] cleanup failed: %s", exc)
+
+    return {**context, "translation_result": original_text, "translation_adapted_text": humanized}
+
+
+async def _do_direct_rewrite(context: dict[str, Any]) -> dict[str, Any]:
+    """Single-pass direct rewrite to target language using library style elements.
+
+    Replaces the old translate→adapt two-step pipeline.
+    Steps:
+      1. Load L1 library samples + extract Ukrainian style elements.
+      2. One LLM call: rewrite the chain-processed EN text directly in Ukrainian,
+         using extracted phrases/openers as concrete style guidance.
+      3. uk→zh-CN→uk chain to break LLM statistical patterns.
+      4. Cleanup pass to fix chain artifacts.
+    """
+    from adapters.llm import get_default_provider
+    from application.services.ukrainian_extractor import extract_style_elements, build_style_injection
+    from infrastructure.db.models import RewriteTask, StyleSample
+    from infrastructure.db.session import AsyncSessionLocal
+    from rewrite.multilingual_chain import apply_chain
+    from rewrite.prompts import _AI_MARKER_BLOCK_UK, _RESTRUCTURE_BLOCK
 
     translation_target = context["translation_target"]
     variants = context.get("variants", [])
     if not variants:
         return context
 
-    rewritten_text = variants[0]["text"]
-    provider = OpenAIProvider()
-    system = get_translation_system_prompt(translation_target)
+    source_text = variants[0]["text"]  # EN chain-processed text
+    task_id = context["task_id"]
+    lang_name = {"uk": "Ukrainian", "pl": "Polish", "de": "German", "fr": "French"}.get(
+        translation_target, translation_target
+    )
+
+    # ── 1. Load library samples and extract style ──────────────────────────
+    library_samples: list[str] = []
+    async with AsyncSessionLocal() as session:
+        task = await session.get(RewriteTask, task_id)
+        if task and task.library_id:
+            from sqlalchemy import select
+            sample_result = await session.execute(
+                select(StyleSample)
+                .where(StyleSample.library_id == task.library_id)
+                .where(StyleSample.quality_tier == QualityTier.L1)
+                .limit(5)
+            )
+            samples = sample_result.scalars().all()
+            if not samples:
+                fb = await session.execute(
+                    select(StyleSample).where(StyleSample.library_id == task.library_id).limit(5)
+                )
+                samples = fb.scalars().all()
+            library_samples = [s.content for s in samples if s.content]
+
+    style_elements = extract_style_elements(library_samples) if library_samples else {}
+    style_injection = build_style_injection(style_elements) if style_elements else ""
+
+    best_reference = library_samples[0][:600] if library_samples else ""
+
+    # ── 2. Direct rewrite in target language ──────────────────────────────
+    provider = get_default_provider()
+
+    system = (
+        f"{_AI_MARKER_BLOCK_UK if translation_target == 'uk' else ''}\n\n"
+        f"{_RESTRUCTURE_BLOCK}\n\n"
+        f"You are a native {lang_name} writer and journalist. "
+        f"Rewrite the following text DIRECTLY in {lang_name} — do not translate word-for-word. "
+        f"Write as a human {lang_name} analyst would write from scratch, capturing the meaning "
+        f"and all key facts but using natural {lang_name} phrasing, rhythm, and vocabulary.\n"
+        f"Preserve all factual content, names, dates, and numbers.\n"
+        f"Return ONLY the {lang_name} text — no explanations, no English."
+    )
+
+    user_parts: list[str] = []
+    if style_injection:
+        user_parts.append(style_injection)
+    if best_reference:
+        user_parts.append(
+            f"Rewrite using the same language style, tone, and expression as this reference "
+            f"(human-written {lang_name}):\n{source_text}\n\n# Reference Text:\n{best_reference}"
+        )
+    else:
+        user_parts.append(f"Text to rewrite in {lang_name}:\n{source_text}")
+
+    user_prompt = "\n\n".join(user_parts)
+
     try:
         response = await provider.generate(
-            f"Text to translate:\n{rewritten_text}",
+            user_prompt,
             system_prompt=system,
-            temperature=0.3,
+            temperature=0.90,
             max_tokens=2048,
         )
-        return {**context, "translation_result": response["text"]}
+        adapted = response["text"]
+        if not adapted.strip():
+            raise ValueError("empty response")
     except Exception as exc:
-        logger.warning("[translate] LLM call failed: %s — skipping translation", exc)
-        return context
+        logger.warning("[adapt] direct rewrite failed: %s — using source text", exc)
+        return {**context, "translation_result": source_text, "translation_adapted_text": source_text}
+
+    # ── 3. uk→zh-CN→uk chain ──────────────────────────────────────────────
+    lang_code = {"uk": "uk", "pl": "pl", "de": "de", "fr": "fr"}.get(translation_target, translation_target)
+    try:
+        chained = await apply_chain(adapted, ["zh-CN", lang_code], source_lang=lang_code)
+        if chained and chained.strip():
+            logger.info("uk chain applied: %d→%d words", len(adapted.split()), len(chained.split()))
+            adapted = chained
+    except Exception as exc:
+        logger.warning("uk chain failed: %s", exc)
+
+    # ── 4. Cleanup pass (fix chain artifacts) ─────────────────────────────
+    cleanup_system = (
+        f"You are a proofreader for {lang_name}. Fix ONLY machine translation artifacts: "
+        f"isolated conjunctions as their own sentences, broken proper nouns, awkward calques. "
+        f"Do NOT rewrite or paraphrase. Return ONLY the fixed text."
+    )
+    try:
+        cleanup = await provider.generate(adapted, system_prompt=cleanup_system, temperature=0.2, max_tokens=2048)
+        if cleanup.get("text", "").strip():
+            adapted = cleanup["text"]
+    except Exception as exc:
+        logger.warning("[adapt] cleanup failed: %s", exc)
+
+    return {**context, "translation_result": source_text, "translation_adapted_text": adapted}
 
 
 async def _do_adapt(context: dict[str, Any]) -> dict[str, Any]:
-    from adapters.llm import OpenAIProvider
+    from adapters.llm import get_default_provider
     from infrastructure.db.models import RewriteTask, StyleSample
     from infrastructure.db.session import AsyncSessionLocal
     from rewrite.prompts import (
@@ -436,16 +745,19 @@ async def _do_adapt(context: dict[str, Any]) -> dict[str, Any]:
             if sample:
                 reference_sample = sample.content
 
-    provider = OpenAIProvider()
+    provider = get_default_provider()
     system = get_adaptation_system_prompt(translation_target, style_profile, reference_sample)
     user = build_adaptation_user_prompt(translated_text, style_profile, reference_sample)
 
     _uk_markers = [
         "варто зазначити", "необхідно відзначити", "слід зазначити",
         "важливо розуміти", "таким чином", "у висновку", "підбиваючи підсумок",
-        "загалом", "безперечно", "безсумнівно", "очевидно", "справді",
+        "загалом", "безперечно", "безсумнівно", "очевидно",
         "безумовно", "крім того", "більш того",
-        # also catch Russian/English markers that may survive translation
+        # GPTZero specifically flags these as AI-artificial in Ukrainian
+        "дійсно,", "справді,", "ось у чому проблема", "ось у чому питання",
+        "що стосується", "необхідно підкреслити", "важливо підкреслити",
+        # Russian/English markers that survive translation
         "стоит отметить", "таким образом", "furthermore", "moreover", "in conclusion",
     ]
 
@@ -473,10 +785,92 @@ async def _do_adapt(context: dict[str, Any]) -> dict[str, Any]:
             if ref2.get("text", "").strip():
                 adapted = ref2["text"]
 
+        # Contraction pass for Ukrainian output — same logic as EN:
+        # AI produces ~0 contractions; human Ukrainian uses скорочення природно.
+        # Ukrainian contractions: "це є"→"це", "не є"→"немає" are different;
+        # focus on informal short forms that survived from the EN translation.
+        def _contraction_ratio_uk(text: str) -> float:
+            words = text.split()
+            if not words:
+                return 0.0
+            # Count apostrophe forms like "не'зрозуміло" (Ukrainian soft contractions)
+            count = sum(1 for w in words if "'" in w and len(w) > 2)
+            return count / len(words) * 100
+
+        if translation_target == "uk" and _contraction_ratio_uk(adapted) < 0.2:
+            pass  # Ukrainian doesn't use English-style contractions — skip
+        elif translation_target != "uk":
+            words = adapted.split()
+            contraction_count = sum(1 for w in words if "'" in w and len(w) > 2)
+            if len(words) > 40 and contraction_count == 0:
+                cont_resp = await provider.generate(
+                    adapted,
+                    system_prompt=(
+                        "Add natural contractions to this text: replace 'do not'→'don't', "
+                        "'does not'→'doesn't', 'it is'→'it's', 'cannot'→'can't', "
+                        "'will not'→'won't', 'would not'→'wouldn't', 'could not'→'couldn't', "
+                        "'should not'→'shouldn't', 'have not'→'haven't', 'has not'→'hasn't'. "
+                        "Make NO other changes. Return ONLY the modified text."
+                    ),
+                    temperature=0.3,
+                    max_tokens=2048,
+                )
+                if cont_resp.get("text", "").strip():
+                    adapted = cont_resp["text"]
+
+        # Multilingual chain for target language:
+        # uk→zh-CN→uk breaks the GPT-style Ukrainian patterns the same way
+        # EN→ZH→EN breaks English ones. Chinese grammar is equally foreign to Ukrainian.
+        adapted = await _chain_target_lang(adapted, translation_target)
+
+        # Post-chain cleanup: the ZH round-trip sometimes leaves translation
+        # artifacts (one-word sentence fragments like "але.", broken names,
+        # awkward calques). A focused LLM pass fixes these without re-introducing
+        # AI patterns — it only repairs, does not rewrite.
+        lang_name = {"uk": "Ukrainian", "pl": "Polish", "de": "German", "fr": "French"}.get(
+            translation_target, translation_target
+        )
+        cleanup_system = (
+            f"You are a proofreader for {lang_name} text. The text below was produced by a "
+            f"machine translation round-trip and may contain artifacts: "
+            f"isolated conjunctions as their own sentences (e.g. 'але.' or 'і.' alone), "
+            f"broken proper nouns, awkward word-for-word calques from Chinese or Japanese. "
+            f"Fix ONLY these translation artifacts. Do NOT rewrite, paraphrase, or change "
+            f"the meaning or structure of any sentence. Do NOT add new content. "
+            f"Do NOT make the text more formal or polished. Return ONLY the fixed text."
+        )
+        try:
+            cleanup_resp = await provider.generate(
+                adapted,
+                system_prompt=cleanup_system,
+                temperature=0.2,
+                max_tokens=2048,
+            )
+            if cleanup_resp.get("text", "").strip():
+                adapted = cleanup_resp["text"]
+        except Exception as exc:
+            logger.warning("[adapt] cleanup pass failed: %s", exc)
+
         return {**context, "translation_adapted_text": adapted}
     except Exception as exc:
         logger.warning("[adapt] LLM call failed: %s — using raw translation", exc)
         return {**context, "translation_adapted_text": translated_text}
+
+
+async def _chain_target_lang(text: str, lang: str) -> str:
+    """Apply target_lang → zh-CN → target_lang chain to break AI patterns."""
+    from rewrite.multilingual_chain import apply_chain
+    # Map to Google Translate language codes
+    lang_code = {"uk": "uk", "pl": "pl", "de": "de", "fr": "fr"}.get(lang, lang)
+    chain = [f"zh-CN", lang_code]
+    try:
+        result = await apply_chain(text, chain, source_lang=lang_code)
+        if result and result.strip():
+            logger.info("chain %s→zh→%s applied: %d→%d words", lang, lang, len(text.split()), len(result.split()))
+            return result
+    except Exception as exc:
+        logger.warning("chain %s→zh→%s failed: %s — using pre-chain text", lang, lang, exc)
+    return text
 
 
 async def _do_complete(context: dict[str, Any]) -> dict[str, Any]:
